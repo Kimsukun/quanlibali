@@ -2993,31 +2993,47 @@ def render_tour_management():
                     "unit": st.column_config.TextColumn("Đơn vị"),
                     "unit_price": st.column_config.TextColumn("Đơn giá (VND)", required=False),
                     "quantity": st.column_config.NumberColumn("Số lượng", min_value=0),
+                    "times": st.column_config.NumberColumn("Số lần", min_value=1),
                     "price_per_pax": st.column_config.TextColumn("Giá/Pax", disabled=True),
                     "total_display": st.column_config.TextColumn("Tổng chi phí", disabled=True),
                     "total_val": st.column_config.NumberColumn("Hidden", disabled=True),
-                    "times": st.column_config.NumberColumn("Hidden", disabled=True),
                 },
-                column_order=("category", "description", "unit", "unit_price", "quantity", "price_per_pax", "total_display"),
+                column_order=("category", "description", "unit", "unit_price", "quantity", "times", "price_per_pax", "total_display"),
                 use_container_width=True,
                 hide_index=True,
                 key=f"editor_est_{st.session_state.est_editor_key}"
             )
             
-            # --- BUTTON: UPDATE CALCULATION ---
+            # --- AUTO-UPDATE CALCULATION ---
             if st.session_state.est_edit_mode:
-                if st.button("🔄 Cập nhật tính toán", use_container_width=True):
-                    # Lưu tạm vào session state để tính toán lại ở lần rerun sau
-                    # Clean unit_price (convert string back to float)
-                    clean_vnd = lambda x: float(str(x).replace('.', '').replace(',', '').replace(' VND', '').strip()) if x else 0.0 # type: ignore
-                    edited_est['unit_price'] = edited_est['unit_price'].apply(clean_vnd)
-                    
-                    # Đảm bảo cột times luôn có giá trị (mặc định 1 nếu bị ẩn/trống)
-                    if 'times' not in edited_est.columns: edited_est['times'] = 1
-                    edited_est['times'] = edited_est['times'].fillna(1)
-                    
-                    cols = ['category', 'description', 'unit', 'unit_price', 'quantity', 'times']
-                    st.session_state.est_df_temp = edited_est[cols].copy()
+                # Tự động cập nhật khi dữ liệu thay đổi
+                df_new = edited_est.copy()
+                
+                def clean_vnd_auto(x):
+                    if isinstance(x, str):
+                        return float(x.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                    return float(x) if x else 0.0
+                
+                df_new['unit_price'] = df_new['unit_price'].apply(clean_vnd_auto)
+                df_new['quantity'] = pd.to_numeric(df_new['quantity'], errors='coerce').fillna(0)
+                if 'times' not in df_new.columns: df_new['times'] = 1
+                df_new['times'] = pd.to_numeric(df_new['times'], errors='coerce').fillna(1)
+                
+                # So sánh với dữ liệu cũ
+                cols_check = ['category', 'description', 'unit', 'unit_price', 'quantity', 'times']
+                df_old = st.session_state.est_df_temp.copy()
+                if 'times' not in df_old.columns: df_old['times'] = 1
+                
+                # Reset index và fillna để so sánh
+                df_new_check = df_new[cols_check].reset_index(drop=True).fillna(0)
+                df_old_check = df_old[cols_check].reset_index(drop=True).fillna(0)
+                
+                has_changes = False
+                if len(df_new_check) != len(df_old_check): has_changes = True
+                elif not df_new_check.equals(df_old_check): has_changes = True
+                
+                if has_changes:
+                    st.session_state.est_df_temp = df_new[cols_check]
                     st.rerun()
 
             # --- TÍNH TOÁN REAL-TIME ---
@@ -3108,9 +3124,9 @@ def render_tour_management():
             g_cnt = tour_info['guest_count'] if tour_info['guest_count'] else 1 # type: ignore
             df_exp['price_per_pax'] = df_exp['total_amount'] / g_cnt
             
-            # Chọn và đổi tên cột (Bỏ cột Số lần, thêm Giá/Pax)
-            df_exp = df_exp[['category', 'description', 'unit', 'unit_price', 'quantity', 'price_per_pax', 'total_amount']]
-            df_exp.columns = ['Hạng mục', 'Diễn giải', 'Đơn vị', 'Đơn giá', 'Số lượng', 'Giá/Pax', 'Tổng chi phí']
+            # Chọn và đổi tên cột
+            df_exp = df_exp[['category', 'description', 'unit', 'unit_price', 'quantity', 'times', 'price_per_pax', 'total_amount']]
+            df_exp.columns = ['Hạng mục', 'Diễn giải', 'Đơn vị', 'Đơn giá', 'Số lượng', 'Số lần', 'Giá/Pax', 'Tổng chi phí']
 
             buffer = io.BytesIO()
             file_ext = "xlsx"
@@ -3201,7 +3217,7 @@ def render_tour_management():
                                 val = df_exp.iloc[row, col]
                                 # Cols: 0=Cat, 1=Desc, 2=Unit, 3=Price, 4=Qty, 5=PaxPrice, 6=Total
                                 if col == 2: fmt = body_center_fmt # Unit centered
-                                elif col in [3, 4, 5, 6]: fmt = money_fmt # Money columns
+                                elif col in [3, 4, 5, 6, 7]: fmt = money_fmt # Money columns
                                 else: fmt = body_fmt
                                 
                                 if pd.isna(val): val = ""
@@ -3479,8 +3495,8 @@ def render_tour_management():
             if check_act: has_act_data = True
 
             is_act_editable = False
-            if not has_act_data: is_act_editable = True # Chưa có dữ liệu -> Cho nhập
-            elif req_act_status == 2: is_act_editable = True # Đã được duyệt -> Cho sửa
+            if current_user_role_tour in ['admin', 'admin_f1']:
+                is_act_editable = True
 
             st.divider()
             st.markdown("#### ✍️ 3.Quyết toán")
@@ -3493,22 +3509,50 @@ def render_tour_management():
                     "unit": st.column_config.TextColumn("Đơn vị"),
                     "unit_price": st.column_config.TextColumn("Đơn giá (VND)", required=False),
                     "quantity": st.column_config.NumberColumn("Số lượng", min_value=0),
+                    "times": st.column_config.NumberColumn("Số lần", min_value=1),
                     "price_per_pax": st.column_config.TextColumn("Giá/Pax", disabled=True),
                     "total_display": st.column_config.TextColumn("Thực tế (VND)", disabled=True),
                     "est_display": st.column_config.TextColumn("Dự toán (VND)", disabled=True),
                     "diff_display": st.column_config.TextColumn("Chênh lệch", disabled=True),
                     "total_val": st.column_config.NumberColumn("Hidden", disabled=True),
-                    "times": st.column_config.NumberColumn("Hidden", disabled=True),
                     "est_val": st.column_config.NumberColumn("Hidden", disabled=True),
                     "diff_val": st.column_config.NumberColumn("Hidden", disabled=True),
                 },
                 disabled=not is_act_editable, # Khóa nếu không được phép sửa
-                column_order=("category", "description", "unit", "unit_price", "quantity", "est_display", "total_display", "diff_display"),
+                column_order=("category", "description", "unit", "unit_price", "quantity", "times", "price_per_pax", "total_display", "est_display", "diff_display"),
                 use_container_width=True,
                 hide_index=True,
                 key="editor_act"
             )
             
+            # --- AUTO-UPDATE CALCULATION (ACTUAL) ---
+            if is_act_editable:
+                # Tự động cập nhật khi dữ liệu thay đổi
+                df_new_act = edited_act.copy()
+                
+                def clean_vnd_act_auto(x):
+                    if isinstance(x, str):
+                        return float(x.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                    return float(x) if x else 0.0
+                
+                df_new_act['unit_price'] = df_new_act['unit_price'].apply(clean_vnd_act_auto)
+                df_new_act['quantity'] = pd.to_numeric(df_new_act['quantity'], errors='coerce').fillna(0)
+                if 'times' not in df_new_act.columns: df_new_act['times'] = 1
+                df_new_act['times'] = pd.to_numeric(df_new_act['times'], errors='coerce').fillna(1)
+                
+                # So sánh với dữ liệu cũ
+                cols_check_act = ['category', 'description', 'unit', 'unit_price', 'quantity', 'times']
+                df_old_act = st.session_state.act_df_temp.copy()
+                if 'times' not in df_old_act.columns: df_old_act['times'] = 1
+                
+                # Reset index và fillna để so sánh
+                df_new_check_act = df_new_act[cols_check_act].reset_index(drop=True).fillna(0)
+                df_old_check_act = df_old_act[cols_check_act].reset_index(drop=True).fillna(0)
+                
+                if len(df_new_check_act) != len(df_old_check_act) or not df_new_check_act.equals(df_old_check_act):
+                    st.session_state.act_df_temp = df_new_act[cols_check_act]
+                    st.rerun()
+
             act_total_cost = 0
             if not edited_act.empty:
                 # Parse unit_price
@@ -3564,6 +3608,7 @@ def render_tour_management():
             df_exp_act['unit_price'] = df_exp_act['unit_price'].apply(clean_num_act)
             df_exp_act['quantity'] = pd.to_numeric(df_exp_act['quantity'], errors='coerce').fillna(0)
             df_exp_act['total_amount'] = df_exp_act['quantity'] * df_exp_act['unit_price'] * df_exp_act['times']
+            df_exp_act['price_per_pax'] = df_exp_act['total_amount'] / guest_cnt_act
             
             # --- COMPARISON LOGIC ---
             # [CODE MỚI] Sử dụng lại est_lookup đã tạo ở trên để tính cột Dự toán và Chênh lệch cho Excel
@@ -3589,13 +3634,14 @@ def render_tour_management():
                 'unit_price': 'Đơn giá', 
                 'quantity': 'Số lượng', 
                 'times': 'Số lần',
+                'price_per_pax': 'Giá/Pax',
                 'total_amount': 'Thực tế',
                 'est_amount': 'Dự toán',
                 'diff_amount': 'Chênh lệch'
             })
             
-            # [REQUEST 1] Bỏ cột 'Số lần'
-            cols_to_export = ['Hạng mục', 'Diễn giải', 'Đơn vị', 'Đơn giá', 'Số lượng', 'Dự toán', 'Thực tế', 'Chênh lệch', 'Ghi chú']
+            # [REQUEST 1] Bỏ cột 'Số lần' -> Keep it
+            cols_to_export = ['Hạng mục', 'Diễn giải', 'Đơn vị', 'Đơn giá', 'Số lượng', 'Số lần', 'Giá/Pax', 'Dự toán', 'Thực tế', 'Chênh lệch', 'Ghi chú']
             df_exp_act_filtered = df_exp_act[cols_to_export]
 
             # [REQUEST 2] Tách thành 2 bảng: Chi phí trong dự toán và chi phí phát sinh
@@ -3684,10 +3730,10 @@ def render_tour_management():
                             for col_idx in range(len(df_in_est.columns)):
                                 val = df_in_est.iloc[row_idx, col_idx]
                                 if col_idx == 2: fmt = body_center_fmt
-                                elif col_idx in [3, 4, 5, 6, 7]: fmt = money_fmt
+                                elif col_idx in [3, 4, 5, 6, 7, 8, 9]: fmt = money_fmt
                                 else: fmt = body_fmt
                                 if is_negative:
-                                    if col_idx in [3, 4, 5, 6, 7]: fmt = alert_money_fmt
+                                    if col_idx in [3, 4, 5, 6, 7, 8, 9]: fmt = alert_money_fmt
                                     else: fmt = alert_fmt
                                 if pd.isna(val): val = ""
                                 worksheet.write(current_row + 1 + row_idx, col_idx, val, fmt)
@@ -3708,10 +3754,10 @@ def render_tour_management():
                             for col_idx in range(len(df_extra_cost.columns)):
                                 val = df_extra_cost.iloc[row_idx, col_idx]
                                 if col_idx == 2: fmt = body_center_fmt
-                                elif col_idx in [3, 4, 5, 6, 7]: fmt = money_fmt
+                                elif col_idx in [3, 4, 5, 6, 7, 8, 9]: fmt = money_fmt
                                 else: fmt = body_fmt
                                 if is_negative:
-                                    if col_idx in [3, 4, 5, 6, 7]: fmt = alert_money_fmt
+                                    if col_idx in [3, 4, 5, 6, 7, 8, 9]: fmt = alert_money_fmt
                                     else: fmt = alert_fmt
                                 if pd.isna(val): val = ""
                                 worksheet.write(current_row + 1 + row_idx, col_idx, val, fmt)
@@ -3758,65 +3804,40 @@ def render_tour_management():
             clean_t_name_act = re.sub(r'[\\/*?:"<>|]', "", tour_info_act['tour_name'] if tour_info_act else "Tour") # type: ignore
             st.download_button(label=f"📥 Tải Bảng Quyết Toán ({file_ext_act.upper()})", data=buffer_act.getvalue(), file_name=f"QuyetToan_{clean_t_name_act}.{file_ext_act}", mime=mime_type_act, use_container_width=True)
 
-            c_update_act, c_save_act = st.columns(2)
-            
-            if c_update_act.button("🔄 Cập nhật tính toán", use_container_width=True, key="update_act_btn"):
-                # Clean and update session state
-                clean_vnd = lambda x: float(str(x).replace('.', '').replace(',', '').replace(' VND', '').strip()) if x else 0.0 # type: ignore
-                edited_act['unit_price'] = edited_act['unit_price'].apply(clean_vnd)
-                if 'times' not in edited_act.columns: edited_act['times'] = 1
-                
-                st.session_state.act_df_temp = edited_act[['category', 'description', 'unit', 'unit_price', 'quantity', 'times']].copy()
-                st.rerun()
+            def save_act_logic():
+                run_query("DELETE FROM tour_items WHERE tour_id=? AND item_type='ACT'", (tour_id_act,), commit=True)
+                data_to_insert = []
+                query = """INSERT INTO tour_items (tour_id, item_type, category, description, unit, quantity, unit_price, total_amount, times)
+                           VALUES (?, 'ACT', ?, ?, ?, ?, ?, ?, ?)"""
 
-            with c_save_act:
-                def save_act_logic():
+                for _, row in edited_act.iterrows():
+                    if row['category'] or row['description']: # type: ignore
+                        u_price = float(str(row['unit_price']).replace('.', '').replace(' VND', '').strip()) if row['unit_price'] else 0 # type: ignore
+                        # Handle times safely
+                        t_times = row.get('times', 1) # type: ignore
+                        if pd.isna(t_times): t_times = 1
+                        total_row = row['quantity'] * u_price * t_times # type: ignore
 
-                    run_query("DELETE FROM tour_items WHERE tour_id=? AND item_type='ACT'", (tour_id_act,), commit=True)
-                    data_to_insert = []
-                    query = """INSERT INTO tour_items (tour_id, item_type, category, description, unit, quantity, unit_price, total_amount, times)
-                               VALUES (?, 'ACT', ?, ?, ?, ?, ?, ?, ?)"""
+                        data_to_insert.append((
+                            tour_id_act,
+                            row['category'],
+                            row['description'],
+                            row['unit'],
+                            row['quantity'],
+                            u_price, # type: ignore
+                            total_row,
+                            t_times
+                        ))
 
-                    for _, row in edited_act.iterrows():
-                        if row['category'] or row['description']: # type: ignore
-                            u_price = float(str(row['unit_price']).replace('.', '').replace(' VND', '').strip()) if row['unit_price'] else 0 # type: ignore
-                            # Handle times safely
-                            t_times = row.get('times', 1) # type: ignore
-                            if pd.isna(t_times): t_times = 1
-                            total_row = row['quantity'] * u_price * t_times # type: ignore
+                if data_to_insert:
+                    run_query_many(query, data_to_insert)
 
-                            data_to_insert.append((
-                                tour_id_act,
-                                row['category'],
-                                row['description'],
-                                row['unit'],
-                                row['quantity'],
-                                u_price, # type: ignore
-                                total_row,
-                                t_times
-                            ))
-
-                    if data_to_insert:
-                        run_query_many(query, data_to_insert)
-
-                if not has_act_data:
-                    if st.button("💾 LƯU QUYẾT TOÁN", type="primary", use_container_width=True):
-                        save_act_logic()
-                        st.success("Đã lưu quyết toán!"); time.sleep(1); st.rerun()
-                else:
-                    if req_act_status == 0:
-                        if st.button("🔓 Yêu cầu chỉnh sửa", type="secondary", use_container_width=True, key=f"req_edit_act_{tour_id_act}"):
-                            if run_query("UPDATE tours SET request_edit_act=1 WHERE id=?", (tour_id_act,), commit=True):
-                                st.toast("Đã gửi yêu cầu!"); time.sleep(1); st.rerun()
-                            else:
-                                st.error("Lỗi: Không thể gửi yêu cầu. Vui lòng thử lại.")
-                    elif req_act_status == 1:
-                        st.warning("⏳ Đang chờ Admin duyệt yêu cầu sửa...")
-                    elif req_act_status == 2:
-                        if st.button("💾 LƯU QUYẾT TOÁN", type="primary", use_container_width=True):
-                            save_act_logic()
-                            run_query("UPDATE tours SET request_edit_act=0 WHERE id=?", (tour_id_act,), commit=True) # Lưu xong khóa lại
-                            st.success("Đã lưu quyết toán!"); time.sleep(1); st.rerun()
+            if is_act_editable:
+                if st.button("💾 LƯU QUYẾT TOÁN", type="primary", use_container_width=True):
+                    save_act_logic()
+                    st.success("Đã lưu quyết toán!"); time.sleep(1); st.rerun()
+            else:
+                st.info("🔒 Chỉ Admin mới được chỉnh sửa quyết toán.")
             
             st.divider()
             if st.button("✅ HOÀN THÀNH TOUR (Chuyển vào Lịch sử)", type="primary", use_container_width=True, key="complete_tour_btn"):
@@ -3863,70 +3884,189 @@ def render_tour_management():
 
     # ---------------- TAB 3: TỔNG HỢP LỢI NHUẬN ----------------
     with tab_rpt:
-        st.subheader("📈 Tổng Hợp Lợi Nhuận Tour")
+        st.subheader("📈 Tổng Hợp Lợi Nhuận & Doanh Số")
         
         # Lọc theo thời gian
         rpt_df = pd.DataFrame([dict(r) for r in all_tours])
         if not rpt_df.empty:
             rpt_df['dt'] = pd.to_datetime(rpt_df['start_date'], format='%d/%m/%Y', errors='coerce') # type: ignore
-            rpt_df['Month'] = rpt_df['dt'].apply(lambda x: x.strftime('%m/%Y') if pd.notnull(x) else '') # type: ignore
+            rpt_df = rpt_df.dropna(subset=['dt'])
             
-            months_avail = sorted(list(set(rpt_df['Month'].dropna())), reverse=True)
-            sel_month_rpt = st.selectbox("Chọn tháng khởi hành:", ["Tất cả"] + months_avail)
+            rpt_df['Month'] = rpt_df['dt'].apply(lambda x: x.strftime('%m/%Y'))
+            rpt_df['Quarter'] = rpt_df['dt'].apply(lambda x: f"Q{(x.month-1)//3+1}/{x.year}")
+            rpt_df['Year'] = rpt_df['dt'].apply(lambda x: x.strftime('%Y'))
             
-            if sel_month_rpt != "Tất cả":
-                rpt_df = rpt_df[rpt_df['Month'] == sel_month_rpt] # type: ignore
+            # --- PRE-FETCH DATA FOR PERFORMANCE ---
+            all_items = run_query("SELECT tour_id, item_type, total_amount FROM tour_items")
+            items_map = {} 
+            if all_items:
+                for item in all_items:
+                    tid = item['tour_id']
+                    itype = item['item_type']
+                    amt = item['total_amount'] or 0
+                    if tid not in items_map: items_map[tid] = {'EST': 0, 'ACT': 0}
+                    items_map[tid][itype] += amt
             
             # Tính toán chỉ số cho từng tour
             results = []
             for _, t in rpt_df.iterrows():
                 tid = t['id'] # type: ignore
-                # Get EST total
-                est = run_query("SELECT SUM(total_amount) as total FROM tour_items WHERE tour_id=? AND item_type='EST'", (tid,), fetch_one=True)
-                est_cost = est['total'] if est and est['total'] else 0 # type: ignore
+                costs = items_map.get(tid, {'EST': 0, 'ACT': 0})
+                est_cost = costs['EST']
+                act_cost = costs['ACT']
                 
-                # Get ACT total
-                act = run_query("SELECT SUM(total_amount) as total FROM tour_items WHERE tour_id=? AND item_type='ACT'", (tid,), fetch_one=True)
-                act_cost = act['total'] if act and act['total'] else 0 # type: ignore
+                p_pct = t.get('est_profit_percent', 0) or 0
+                t_pct = t.get('est_tax_percent', 0) or 0
+
+                # Tính doanh thu (Ưu tiên giá chốt tay)
+                final_price_manual = float(t.get('final_tour_price', 0) or 0)
+                child_price_manual = float(t.get('child_price', 0) or 0)
+                final_qty = float(t.get('final_qty', 0) or 0)
+                child_qty = float(t.get('child_qty', 0) or 0)
+                if final_qty == 0: final_qty = float(t.get('guest_count', 1))
                 
-                # Calc logic
-                p_pct = t['est_profit_percent'] # type: ignore
-                t_pct = t['est_tax_percent'] # type: ignore
+                manual_revenue = (final_price_manual * final_qty) + (child_price_manual * child_qty)
                 
-                profit_est_val = est_cost * (p_pct/100)
-                final_sale = (est_cost + profit_est_val) * (1 + t_pct/100)
-                net_revenue = final_sale / (1 + t_pct/100) # Doanh thu thuần
+                if manual_revenue > 0:
+                    final_sale = manual_revenue
+                else:
+                    profit_est_val = est_cost * (p_pct/100)
+                    final_sale = (est_cost + profit_est_val) * (1 + t_pct/100)
+
+                net_revenue = final_sale / (1 + t_pct/100) if (1 + t_pct/100) != 0 else final_sale
                 
                 real_profit = net_revenue - act_cost
                 
                 results.append({
+                    **t.to_dict(),
                     "Tên Đoàn": t['tour_name'], # type: ignore
                     "Sales": t['sale_name'], # type: ignore
                     "Ngày đi": t['start_date'], # type: ignore
                     "Doanh Thu Thuần": net_revenue,
                     "Chi Phí TT": act_cost,
                     "Lợi Nhuận TT": real_profit,
-                    "Tỷ suất LN": (real_profit/net_revenue*100) if net_revenue else 0
                 })
             
             res_df = pd.DataFrame(results)
+
+            # --- UI CONTROLS ---
+            c_type, c_period, c_val = st.columns(3)
+            report_type = c_type.selectbox("Loại báo cáo:", ["Theo Tour (Chi tiết)", "Theo Sales (Tổng hợp)"])
+            period_type = c_period.selectbox("Xem theo:", ["Tháng", "Quý", "Năm"])
             
-            # Tổng hợp
-            c_sum1, c_sum2 = st.columns(2)
-            c_sum1.metric("Tổng Lợi Nhuận Tháng", format_vnd(res_df['Lợi Nhuận TT'].sum()))
+            period_options = []
+            period_col = 'Month'
+            if period_type == "Tháng":
+                period_col = 'Month'
+                period_options = sorted(res_df['Month'].unique(), reverse=True)
+            elif period_type == "Quý":
+                period_col = 'Quarter'
+                period_options = sorted(res_df['Quarter'].unique(), reverse=True)
+            else:
+                period_col = 'Year'
+                period_options = sorted(res_df['Year'].unique(), reverse=True)
             
-            # Display Table
-            st.dataframe(
-                res_df,
-                column_config={
-                    "Doanh Thu Thuần": st.column_config.NumberColumn(format="%d VND"),
-                    "Chi Phí TT": st.column_config.NumberColumn(format="%d VND"),
-                    "Lợi Nhuận TT": st.column_config.NumberColumn(format="%d VND"),
-                    "Tỷ suất LN": st.column_config.NumberColumn(format="%.2f %%"),
-                },
-                use_container_width=True,
-                hide_index=True
-            )
+            selected_period = c_val.selectbox("Chọn thời gian:", ["Tất cả"] + period_options)
+            
+            # Filter
+            if selected_period != "Tất cả":
+                res_df = res_df[res_df[period_col] == selected_period]
+            
+            if report_type == "Theo Tour (Chi tiết)":
+                res_df['Tỷ suất LN'] = res_df.apply(lambda x: (x['Lợi Nhuận TT']/x['Doanh Thu Thuần']*100) if x['Doanh Thu Thuần'] else 0, axis=1)
+                
+                c_sum1, c_sum2 = st.columns(2)
+                c_sum1.metric("Tổng Lợi Nhuận", format_vnd(res_df['Lợi Nhuận TT'].sum()))
+                c_sum2.metric("Tổng Doanh Thu", format_vnd(res_df['Doanh Thu Thuần'].sum()))
+                
+                st.dataframe(
+                    res_df[['Tên Đoàn', 'Sales', 'Ngày đi', 'Doanh Thu Thuần', 'Chi Phí TT', 'Lợi Nhuận TT', 'Tỷ suất LN']],
+                    column_config={
+                        "Doanh Thu Thuần": st.column_config.NumberColumn(format="%d VND"),
+                        "Chi Phí TT": st.column_config.NumberColumn(format="%d VND"),
+                        "Lợi Nhuận TT": st.column_config.NumberColumn(format="%d VND"),
+                        "Tỷ suất LN": st.column_config.NumberColumn(format="%.2f %%"),
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+                # Chuẩn bị dữ liệu xuất Excel
+                df_export = res_df[['Tên Đoàn', 'Sales', 'Ngày đi', 'Doanh Thu Thuần', 'Chi Phí TT', 'Lợi Nhuận TT', 'Tỷ suất LN']].copy()
+                file_name_rpt = f"BaoCao_LoiNhuan_Tour_{selected_period.replace('/', '_')}.xlsx"
+            else: # Theo Sales
+                df_sales = res_df.groupby('Sales').agg({
+                    'Doanh Thu Thuần': 'sum',
+                    'Chi Phí TT': 'sum',
+                    'Lợi Nhuận TT': 'sum',
+                    'id': 'count'
+                }).reset_index()
+                df_sales.columns = ["Nhân viên Sales", "Doanh Thu Thuần", "Chi Phí TT", "Lợi Nhuận TT", "Số Tour"]
+                df_sales['Tỷ suất LN'] = df_sales.apply(lambda x: (x['Lợi Nhuận TT']/x['Doanh Thu Thuần']*100) if x['Doanh Thu Thuần'] else 0, axis=1)
+                df_sales = df_sales.sort_values('Lợi Nhuận TT', ascending=False)
+                
+                st.markdown(f"##### 🏆 Bảng xếp hạng Sales ({selected_period})")
+                if not df_sales.empty:
+                    best = df_sales.iloc[0]
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Top Sales", best['Nhân viên Sales'], delta=format_vnd(best['Lợi Nhuận TT']))
+                    c2.metric("Tổng Doanh Số", format_vnd(df_sales['Doanh Thu Thuần'].sum()))
+                    c3.metric("Tổng Lợi Nhuận", format_vnd(df_sales['Lợi Nhuận TT'].sum()))
+                    
+                    st.bar_chart(df_sales.set_index("Nhân viên Sales")[['Doanh Thu Thuần', 'Lợi Nhuận TT']])
+                
+                st.dataframe(
+                    df_sales,
+                    column_config={
+                        "Doanh Thu Thuần": st.column_config.NumberColumn(format="%d VND"),
+                        "Chi Phí TT": st.column_config.NumberColumn(format="%d VND"),
+                        "Lợi Nhuận TT": st.column_config.NumberColumn(format="%d VND"),
+                        "Tỷ suất LN": st.column_config.NumberColumn(format="%.2f %%"),
+                        "Số Tour": st.column_config.NumberColumn(format="%d"),
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+                # Chuẩn bị dữ liệu xuất Excel
+                df_export = df_sales.copy()
+                file_name_rpt = f"BaoCao_DoanhSo_Sales_{selected_period.replace('/', '_')}.xlsx"
+
+            # --- TÍNH NĂNG XUẤT EXCEL ---
+            st.write("")
+            buffer_rpt = io.BytesIO()
+            with pd.ExcelWriter(buffer_rpt, engine='xlsxwriter') as writer:
+                df_export.to_excel(writer, index=False, sheet_name='Report')
+                workbook = writer.book
+                worksheet = writer.sheets['Report']
+                
+                # Định dạng
+                header_fmt = workbook.add_format({'bold': True, 'fg_color': '#2E7D32', 'font_color': 'white', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+                body_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter'})
+                money_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'num_format': '#,##0'})
+                pct_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'num_format': '0.00"%"'})
+                
+                # Áp dụng định dạng header
+                for col_num, value in enumerate(df_export.columns):
+                    worksheet.write(0, col_num, value, header_fmt)
+                
+                # Áp dụng định dạng body
+                for row_idx in range(len(df_export)):
+                    for col_idx in range(len(df_export.columns)):
+                        val = df_export.iloc[row_idx, col_idx]
+                        col_name = df_export.columns[col_idx]
+                        
+                        fmt = body_fmt
+                        if col_name in ['Doanh Thu Thuần', 'Chi Phí TT', 'Lợi Nhuận TT']: fmt = money_fmt
+                        elif col_name == 'Tỷ suất LN': fmt = pct_fmt
+                        
+                        if pd.isna(val): val = ""
+                        worksheet.write(row_idx + 1, col_idx, val, fmt)
+                
+                worksheet.set_column('A:A', 25)
+                worksheet.set_column('B:Z', 18)
+
+            st.download_button("📥 Xuất báo cáo Excel", buffer_rpt.getvalue(), file_name_rpt, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         else:
             st.info("Chưa có dữ liệu tour.")
 
@@ -4141,6 +4281,11 @@ def render_hr_management():
 def render_search_module():
     st.title("🔍 Tra cứu thông tin hệ thống")
     
+    # Lấy thông tin user hiện tại để lọc
+    current_user_info = st.session_state.get("user_info", {})
+    current_user_name = current_user_info.get('name', 'N/A')
+    current_user_role = current_user_info.get('role')
+
     query = st.text_input("Nhập từ khóa tìm kiếm", placeholder="Nhập Mã Tour, Số Hóa Đơn, Mã Vé, Mã Chi Phí, hoặc Tên Khách...", help="Hệ thống sẽ tìm trong Tour, Hóa đơn, UNC và Vé máy bay")
         
     if query:
@@ -4149,7 +4294,13 @@ def render_search_module():
         found_any = False
         
         # 1. TÌM TRONG TOUR
-        tours = run_query("SELECT * FROM tours WHERE tour_code LIKE ? OR tour_name LIKE ?", (term, term))
+        tour_sql = "SELECT * FROM tours WHERE (tour_code LIKE ? OR tour_name LIKE ?)"
+        tour_params = [term, term]
+        if current_user_role == 'sale':
+            tour_sql += " AND sale_name=?"
+            tour_params.append(current_user_name)
+            
+        tours = run_query(tour_sql, tuple(tour_params))
         if tours:
             found_any = True
             st.subheader(f"📦 Tìm thấy {len(tours)} Tour")
@@ -4167,7 +4318,24 @@ def render_search_module():
                     
                     st.info(f"💰 Dự toán: {format_vnd(est_val)} | 💸 Quyết toán: {format_vnd(act_val)}")
 
-        # 2. TÌM TRONG HÓA ĐƠN / UNC
+        # 2. TÌM TRONG KHÁCH HÀNG (MỚI)
+        cust_sql = "SELECT * FROM customers WHERE (name LIKE ? OR phone LIKE ?)"
+        cust_params = [term, term]
+        if current_user_role == 'sale':
+            cust_sql += " AND sale_name=?"
+            cust_params.append(current_user_name)
+            
+        custs = run_query(cust_sql, tuple(cust_params))
+        if custs:
+            found_any = True
+            st.subheader(f"👥 Tìm thấy {len(custs)} Khách hàng")
+            for c in custs:
+                with st.expander(f"Khách hàng: {c['name']} - {c['phone']}", expanded=True):
+                    st.write(f"**Email:** {c['email']}")
+                    st.write(f"**Địa chỉ:** {c['address']}")
+                    st.write(f"**Ghi chú:** {c['notes']}")
+
+        # 3. TÌM TRONG HÓA ĐƠN / UNC
         invs = run_query("SELECT * FROM invoices WHERE invoice_number LIKE ? OR cost_code LIKE ? OR memo LIKE ? ORDER BY date DESC", (term, term, term))
         if invs:
             found_any = True
