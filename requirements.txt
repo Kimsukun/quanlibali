@@ -1,0 +1,13 @@
+streamlit
+pandas
+pdfplumber
+reportlab
+Pillow
+gspread
+google-auth
+google-api-python-client
+openpyxl
+xlsxwriter
+opencv-python-headless
+pytesseract
+numpy

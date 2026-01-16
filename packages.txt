@@ -1,0 +1,3 @@
+tesseract-ocr
+tesseract-ocr-vie
+libgl1
