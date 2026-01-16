@@ -43,8 +43,13 @@ except ImportError:
 # --- OCR CONFIGURATION ---
 try:
     import pytesseract
-    # BỎ COMMENT DÒNG DƯỚI VÀ TRỎ ĐÚNG ĐƯỜNG DẪN CÀI ĐẶT
-    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe' 
+    # CODE MỚI (Tự động nhận diện môi trường)
+    if os.path.exists(r'C:\Program Files\Tesseract-OCR\tesseract.exe'):
+        # Chạy trên máy tính Windows cá nhân
+        pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+    else:
+        # Chạy trên Streamlit Cloud (Linux) - Không cần set path, nó tự tìm
+        pass
     HAS_OCR = True
 except ImportError:
     HAS_OCR = False
