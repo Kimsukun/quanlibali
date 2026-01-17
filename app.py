@@ -28,6 +28,19 @@ def auto_install(package):
     except: return False
 
 try:
+    import google.generativeai as genai
+    # Kiểm tra version, nếu cũ quá thì force update (tùy chọn, nhưng nên làm)
+    import importlib.metadata
+    ver = importlib.metadata.version("google-generativeai")
+    if ver < "0.7.0": raise ImportError
+except ImportError:
+    # Thêm --upgrade để cài bản mới nhất
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "google-generativeai"])
+    import google.generativeai as genai
+    
+import json
+
+try:
     import gspread
     from google.oauth2.service_account import Credentials
     from googleapiclient.discovery import build
@@ -1121,6 +1134,170 @@ def extract_data_smart(file_obj, is_image, doc_type="Hóa đơn"):
     return info, msg
 
 # ==========================================
+# --- MODULE XỬ LÝ AI (GEMINI) & HYBRID ---
+# ==========================================
+
+# --- HÀM OCR BẰNG AI (GEMINI) - PHIÊN BẢN FIX LỖI 400 ---
+def analyze_invoice_with_gemini(image_file, doc_type="Hóa đơn"):
+    """
+    Gửi ảnh lên Gemini để trích xuất thông tin JSON.
+    Tự động chuẩn hóa ảnh sang JPEG để tránh lỗi 400.
+    """
+    try:
+        # 1. ĐỌC API KEY TỪ FILE JSON
+        api_key = None
+        try:
+            with open('service_account.json', 'r') as f:
+                service_info = json.load(f)
+                api_key = service_info.get("GEMINI_API_KEY")
+        except Exception as e:
+            return None, f"Lỗi đọc file service_account.json: {str(e)}"
+
+        if not api_key:
+            return None, "⚠️ Không tìm thấy GEMINI_API_KEY trong file service_account.json"
+        
+        # Cấu hình Gemini
+        genai.configure(api_key=api_key) # type: ignore
+        
+        # 2. CHUẨN HÓA ẢNH (FIX LỖI 400)
+        # Mục tiêu: Dù là PDF hay PNG, đều convert về JPEG chuẩn (RGB)
+        final_image_bytes = None
+        
+        try:
+            image_file.seek(0)
+            file_name = getattr(image_file, 'name', 'unknown').lower()
+            
+            # TRƯỜNG HỢP 1: FILE PDF -> Chuyển trang đầu thành ảnh
+            if file_name.endswith('.pdf'):
+                with pdfplumber.open(image_file) as pdf:
+                    if len(pdf.pages) > 0:
+                        # Lấy trang đầu tiên, độ phân giải cao (300 DPI)
+                        page_image = pdf.pages[0].to_image(resolution=300).original
+                        
+                        # Convert sang RGB (đề phòng) và lưu thành bytes
+                        if page_image.mode != 'RGB':
+                            page_image = page_image.convert('RGB')
+                        
+                        img_byte_arr = io.BytesIO()
+                        page_image.save(img_byte_arr, format='JPEG', quality=85)
+                        final_image_bytes = img_byte_arr.getvalue()
+                    else:
+                        return None, "File PDF rỗng, không có trang nào."
+            
+            # TRƯỜNG HỢP 2: FILE ẢNH (PNG, JPG...) -> Convert về JPEG RGB
+            else:
+                image_pil = Image.open(image_file)
+                
+                # Xử lý ảnh trong suốt (RGBA) hoặc hệ màu in ấn (CMYK)
+                if image_pil.mode in ('RGBA', 'P', 'CMYK'):
+                    image_pil = image_pil.convert('RGB')
+                
+                img_byte_arr = io.BytesIO()
+                image_pil.save(img_byte_arr, format='JPEG', quality=85)
+                final_image_bytes = img_byte_arr.getvalue()
+
+        except Exception as img_err:
+            return None, f"Lỗi xử lý ảnh đầu vào: {str(img_err)}"
+
+        if not final_image_bytes:
+            return None, "Không thể tạo dữ liệu ảnh để gửi đi."
+
+        # Đóng gói dữ liệu gửi đi (Luôn là image/jpeg)
+        image_part = {"mime_type": "image/jpeg", "data": final_image_bytes}
+
+        # 3. Tạo Prompt
+        prompt = f"""
+        Bạn là kế toán viên chuyên nghiệp. Hãy trích xuất thông tin từ hình ảnh {doc_type} này thành dữ liệu JSON.
+        
+        Yêu cầu bắt buộc:
+        1. Trả về kết quả CHỈ LÀ MỘT JSON thuần.
+        2. Các trường cần lấy:
+           - date: ngày chứng từ (DD/MM/YYYY).
+           - seller: tên đơn vị bán / người thụ hưởng.
+           - buyer: tên đơn vị mua / người trả tiền.
+           - inv_num: số hóa đơn / số bút toán.
+           - inv_sym: ký hiệu (nếu có).
+           - pre_tax: thành tiền trước thuế (số nguyên).
+           - tax: tiền thuế (số nguyên).
+           - total: tổng thanh toán (số nguyên).
+           - content: nội dung diễn giải chính.
+        
+        Nếu không có thông tin, hãy để 0 hoặc "".
+        """
+
+        # 4. TỰ ĐỘNG CHỌN MODEL
+        active_model_name = 'models/gemini-1.5-flash' # Mặc định dùng Flash
+        
+        # Thử lấy model tốt nhất
+        try:
+            for m in genai.list_models(): # type: ignore
+                if 'generateContent' in m.supported_generation_methods:
+                    if 'flash' in m.name:
+                        active_model_name = m.name
+                        break
+        except: pass
+
+        # 5. Gọi Model
+        model = genai.GenerativeModel(active_model_name) # type: ignore
+        response = model.generate_content([prompt, image_part])
+        
+        # 6. Xử lý kết quả trả về
+        if not response.text:
+            return None, "AI không trả về kết quả (Response empty)."
+
+        raw_text = response.text.strip()
+        if raw_text.startswith("```json"): raw_text = raw_text[7:]
+        if raw_text.endswith("```"): raw_text = raw_text[:-3]
+            
+        data = json.loads(raw_text)
+        
+        info = {
+            "date": data.get("date", ""),
+            "seller": data.get("seller", ""),
+            "buyer": data.get("buyer", ""),
+            "inv_num": data.get("inv_num", ""),
+            "inv_sym": data.get("inv_sym", ""),
+            "pre_tax": float(data.get("pre_tax", 0)),
+            "tax": float(data.get("tax", 0)),
+            "total": float(data.get("total", 0)),
+            "content": data.get("content", ""),
+            "note": f"✨ AI ({active_model_name})" 
+        }
+        return info, None
+
+    except Exception as e:
+        return None, f"Lỗi AI: {str(e)}"
+
+def extract_data_hybrid(file_obj, is_image, doc_type="Hóa đơn"):
+    """
+    Chế độ Lai ghép: Ưu tiên AI -> Nếu lỗi thì dùng Tesseract
+    """
+    # CÁCH 1: Thử dùng AI trước
+    try:
+        file_obj.seek(0) # Reset con trỏ file
+        data, error = analyze_invoice_with_gemini(file_obj, doc_type)
+        
+        if data and not error:
+            return data, None
+        else:
+            print(f"AI thất bại, chuyển sang OCR thường. Lỗi: {error}")
+    except Exception as e:
+        print(f"Lỗi nghiêm trọng AI: {e}")
+
+    # CÁCH 2: Fallback về Tesseract (OCR thường)
+    try:
+        file_obj.seek(0) # Reset con trỏ file lần nữa
+        st.toast("⚠️ AI đang bận, đang dùng công nghệ cũ...", icon="🔄")
+        
+        # Gọi hàm cũ của bạn
+        data, msg = extract_data_smart(file_obj, is_image, doc_type)
+        if data:
+            data['note'] = "📷 Xử lý bởi Tesseract (Offline)"
+        return data, msg
+    except Exception as e:
+        return None, f"Lỗi toàn hệ thống: {str(e)}"
+
+# ==========================================
 # 4. GIAO DIỆN & LOGIC MODULES
 # ==========================================
 
@@ -1541,34 +1718,58 @@ def render_cost_control(menu):
                                 st.rerun()
 
                 if is_ready_to_analyze:
+                    # Thêm lựa chọn chế độ quét
+                    scan_mode = st.radio(
+                        "Công nghệ quét:", 
+                        ["🚀 Tự động (Hybrid: AI -> Tesseract)", "⚡ Chỉ dùng AI (Gemini)", "📷 Chỉ dùng Tesseract"], 
+                        horizontal=True
+                    )
+
                     if st.button(f"🔍 QUÉT THÔNG TIN ({doc_type})", type="primary", width="stretch"):
-                        file_to_scan = None
-                        is_img_input = not is_pdf_origin
-                        if is_img_input: file_to_scan = uploaded_file 
-                        else: file_to_scan = uploaded_file 
+                        # Logic xác định loại file cho hàm cũ
+                        file_to_scan = uploaded_file
+                        is_img_input = "pdf" not in uploaded_file.type
                         
-                        if file_to_scan:
-                            file_to_scan.seek(0)
-                            data, msg = extract_data_smart(file_to_scan, is_img_input, doc_type)
-                            if msg: st.warning(msg)
-                            if data is None: st.error("Lỗi hệ thống khi đọc file.")
-                            else:
-                                data['file_name'] = uploaded_file.name
-                                st.session_state.pdf_data = data
-                                st.session_state.edit_lock = True
-                                st.session_state.local_edit_count = 0
+                        data = None
+                        msg = None
+
+                        with st.spinner("Đang phân tích dữ liệu..."):
+                            if "Tự động" in scan_mode:
+                                # Dùng hàm Hybrid mới
+                                data, msg = extract_data_hybrid(file_to_scan, is_img_input, doc_type)
+                            
+                            elif "Chỉ dùng AI" in scan_mode:
+                                # Chỉ gọi Gemini
+                                file_to_scan.seek(0)
+                                data, msg = analyze_invoice_with_gemini(file_to_scan, doc_type)
                                 
-                                if not HAS_OCR and is_img_input:
-                                    st.error("❌ Máy chưa cài Tesseract OCR. Không thể đọc số từ ảnh đâu á!")
-                                
-                                # --- 1. KHÔI PHỤC THÔNG BÁO KHỚP TIỀN ---
-                                if doc_type == "Hóa đơn":
-                                    diff = abs(data['total'] - (data['pre_tax'] + data['tax']))
-                                    if diff < 10: st.success(f"✅ Chuẩn men! Tổng: {format_vnd(data['total'])}")
-                                    else: st.warning(f"⚠️ Lệch tiền: {format_vnd(diff)} (Tổng != Tiền hàng + Thuế)")
-                                else:
-                                    st.success(f"✅ Đã quét UNC! Số tiền: {format_vnd(data['total'])}")
-                                st.rerun()
+                            else: 
+                                # Chỉ gọi hàm cũ (Tesseract)
+                                file_to_scan.seek(0)
+                                data, msg = extract_data_smart(file_to_scan, is_img_input, doc_type)
+                                if data: data['note'] = "📷 Xử lý bởi Tesseract"
+
+                        # --- Hiển thị kết quả ---
+                        if msg: st.warning(msg)
+                        
+                        if data:
+                            # Thông báo thành công & Nguồn dữ liệu
+                            st.success(f"✅ Đã quét xong! ({data.get('note', '')})")
+                            
+                            # Lưu vào Session State
+                            data['file_name'] = uploaded_file.name
+                            st.session_state.pdf_data = data
+                            st.session_state.edit_lock = True
+                            st.session_state.local_edit_count = 0
+                            
+                            # Nếu là Hóa đơn, kiểm tra lệch tiền
+                            if doc_type == "Hóa đơn":
+                                diff = abs(data['total'] - (data['pre_tax'] + data['tax']))
+                                if diff < 10: st.caption("✅ Kiểm tra: Tổng tiền khớp.")
+                                else: st.warning(f"⚠️ Kiểm tra: Lệch {format_vnd(diff)}")
+                            
+                            time.sleep(0.5)
+                            st.rerun()
 
                 if st.session_state.pdf_data:
                     d = st.session_state.pdf_data
