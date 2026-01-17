@@ -1137,24 +1137,21 @@ def extract_data_smart(file_obj, is_image, doc_type="Hóa đơn"):
 # --- MODULE XỬ LÝ AI (GEMINI) & HYBRID ---
 # ==========================================
 
-# --- HÀM OCR BẰNG AI (GEMINI) - PHIÊN BẢN FIX LỖI 400 ---
 def analyze_invoice_with_gemini(image_file, doc_type="Hóa đơn"):
     """
     Gửi ảnh lên Gemini để trích xuất thông tin JSON.
-    Tự động chuẩn hóa ảnh sang JPEG để tránh lỗi 400.
+    Hỗ trợ cả Local và Streamlit Cloud.
     """
     try:
-        # 1. ĐỌC API KEY TỪ FILE JSON
+        # 1. LẤY API KEY (Ưu tiên Secrets -> Sau đó đến File)
         api_key = None
-        try:
-            with open('service_account.json', 'r') as f:
-                service_info = json.load(f)
-                api_key = service_info.get("GEMINI_API_KEY")
-        except Exception as e:
-            return None, f"Lỗi đọc file service_account.json: {str(e)}"
-
+        creds_dict = get_credentials()
+        
+        if creds_dict and "GEMINI_API_KEY" in creds_dict:
+            api_key = creds_dict["GEMINI_API_KEY"]
+            
         if not api_key:
-            return None, "⚠️ Không tìm thấy GEMINI_API_KEY trong file service_account.json"
+            return None, "⚠️ Không tìm thấy GEMINI_API_KEY trong cấu hình."
         
         # Cấu hình Gemini
         genai.configure(api_key=api_key) # type: ignore
@@ -1162,106 +1159,54 @@ def analyze_invoice_with_gemini(image_file, doc_type="Hóa đơn"):
         # 2. CHUẨN HÓA ẢNH (FIX LỖI 400)
         # Mục tiêu: Dù là PDF hay PNG, đều convert về JPEG chuẩn (RGB)
         final_image_bytes = None
-        
         try:
             image_file.seek(0)
             file_name = getattr(image_file, 'name', 'unknown').lower()
-            
-            # TRƯỜNG HỢP 1: FILE PDF -> Chuyển trang đầu thành ảnh
             if file_name.endswith('.pdf'):
                 with pdfplumber.open(image_file) as pdf:
                     if len(pdf.pages) > 0:
-                        # Lấy trang đầu tiên, độ phân giải cao (300 DPI)
                         page_image = pdf.pages[0].to_image(resolution=300).original
-                        
-                        # Convert sang RGB (đề phòng) và lưu thành bytes
-                        if page_image.mode != 'RGB':
-                            page_image = page_image.convert('RGB')
-                        
+                        if page_image.mode != 'RGB': page_image = page_image.convert('RGB')
                         img_byte_arr = io.BytesIO()
                         page_image.save(img_byte_arr, format='JPEG', quality=85)
                         final_image_bytes = img_byte_arr.getvalue()
-                    else:
-                        return None, "File PDF rỗng, không có trang nào."
-            
-            # TRƯỜNG HỢP 2: FILE ẢNH (PNG, JPG...) -> Convert về JPEG RGB
+                    else: return None, "File PDF rỗng."
             else:
                 image_pil = Image.open(image_file)
-                
-                # Xử lý ảnh trong suốt (RGBA) hoặc hệ màu in ấn (CMYK)
-                if image_pil.mode in ('RGBA', 'P', 'CMYK'):
-                    image_pil = image_pil.convert('RGB')
-                
+                if image_pil.mode in ('RGBA', 'P', 'CMYK'): image_pil = image_pil.convert('RGB')
                 img_byte_arr = io.BytesIO()
                 image_pil.save(img_byte_arr, format='JPEG', quality=85)
                 final_image_bytes = img_byte_arr.getvalue()
+        except Exception as img_err: return None, f"Lỗi xử lý ảnh: {str(img_err)}"
 
-        except Exception as img_err:
-            return None, f"Lỗi xử lý ảnh đầu vào: {str(img_err)}"
+        if not final_image_bytes: return None, "Lỗi tạo dữ liệu ảnh."
 
-        if not final_image_bytes:
-            return None, "Không thể tạo dữ liệu ảnh để gửi đi."
-
-        # Đóng gói dữ liệu gửi đi (Luôn là image/jpeg)
         image_part = {"mime_type": "image/jpeg", "data": final_image_bytes}
-
-        # 3. Tạo Prompt
+        
         prompt = f"""
         Bạn là kế toán viên chuyên nghiệp. Hãy trích xuất thông tin từ hình ảnh {doc_type} này thành dữ liệu JSON.
-        
         Yêu cầu bắt buộc:
         1. Trả về kết quả CHỈ LÀ MỘT JSON thuần.
-        2. Các trường cần lấy:
-           - date: ngày chứng từ (DD/MM/YYYY).
-           - seller: tên đơn vị bán / người thụ hưởng.
-           - buyer: tên đơn vị mua / người trả tiền.
-           - inv_num: số hóa đơn / số bút toán.
-           - inv_sym: ký hiệu (nếu có).
-           - pre_tax: thành tiền trước thuế (số nguyên).
-           - tax: tiền thuế (số nguyên).
-           - total: tổng thanh toán (số nguyên).
-           - content: nội dung diễn giải chính.
-        
+        2. Các trường cần lấy: date (DD/MM/YYYY), seller, buyer, inv_num, inv_sym, pre_tax (số), tax (số), total (số), content.
         Nếu không có thông tin, hãy để 0 hoặc "".
         """
-
-        # 4. TỰ ĐỘNG CHỌN MODEL
-        active_model_name = 'models/gemini-1.5-flash' # Mặc định dùng Flash
         
-        # Thử lấy model tốt nhất
-        try:
-            for m in genai.list_models(): # type: ignore
-                if 'generateContent' in m.supported_generation_methods:
-                    if 'flash' in m.name:
-                        active_model_name = m.name
-                        break
-        except: pass
-
-        # 5. Gọi Model
+        active_model_name = 'models/gemini-1.5-flash'
         model = genai.GenerativeModel(active_model_name) # type: ignore
         response = model.generate_content([prompt, image_part])
         
-        # 6. Xử lý kết quả trả về
-        if not response.text:
-            return None, "AI không trả về kết quả (Response empty)."
-
+        if not response.text: return None, "AI không trả về kết quả."
+        
         raw_text = response.text.strip()
         if raw_text.startswith("```json"): raw_text = raw_text[7:]
         if raw_text.endswith("```"): raw_text = raw_text[:-3]
             
         data = json.loads(raw_text)
-        
         info = {
-            "date": data.get("date", ""),
-            "seller": data.get("seller", ""),
-            "buyer": data.get("buyer", ""),
-            "inv_num": data.get("inv_num", ""),
-            "inv_sym": data.get("inv_sym", ""),
-            "pre_tax": float(data.get("pre_tax", 0)),
-            "tax": float(data.get("tax", 0)),
-            "total": float(data.get("total", 0)),
-            "content": data.get("content", ""),
-            "note": f"✨ AI ({active_model_name})" 
+            "date": data.get("date", ""), "seller": data.get("seller", ""), "buyer": data.get("buyer", ""),
+            "inv_num": data.get("inv_num", ""), "inv_sym": data.get("inv_sym", ""),
+            "pre_tax": float(data.get("pre_tax", 0)), "tax": float(data.get("tax", 0)), "total": float(data.get("total", 0)),
+            "content": data.get("content", ""), "note": f"✨ AI ({active_model_name})" 
         }
         return info, None
 
