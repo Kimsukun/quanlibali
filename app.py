@@ -1446,6 +1446,140 @@ def create_handover_docx(tour_info, guests, hotels, restaurants, sightseeings, c
 # 4. GIAO DIỆN & LOGIC MODULES
 # ==========================================
 
+def render_dashboard():
+    st.title("🏠 Trang Chủ - Tổng Quan Kinh Doanh")
+    
+    # User context
+    user_info = st.session_state.get("user_info", {})
+    role = user_info.get('role')
+    username = user_info.get('name')
+    
+    # Time context
+    now = datetime.now()
+    current_month = now.month
+    current_year = now.year
+    
+    st.markdown(f"### 📅 Số liệu tháng {current_month}/{current_year}")
+    
+    # Data fetching
+    # 1. Tours
+    tour_query = "SELECT * FROM tours WHERE status != 'deleted'"
+    tour_params = []
+    if role == 'sale':
+        tour_query += " AND sale_name=?"
+        tour_params.append(username)
+    tours = run_query(tour_query, tuple(tour_params))
+    
+    # 2. Bookings
+    bk_query = "SELECT * FROM service_bookings WHERE status != 'deleted'"
+    bk_params = []
+    if role == 'sale':
+        bk_query += " AND sale_name=?"
+        bk_params.append(username)
+    bookings = run_query(bk_query, tuple(bk_params))
+    
+    # 3. Costs (for tours)
+    all_items = run_query("SELECT tour_id, item_type, total_amount FROM tour_items")
+    items_map = {}
+    if all_items:
+        for item in all_items:
+            tid = item['tour_id']
+            itype = item['item_type']
+            amt = item['total_amount'] or 0
+            if tid not in items_map: items_map[tid] = {'EST': 0, 'ACT': 0}
+            items_map[tid][itype] += amt
+
+    # Processing
+    total_tour_rev = 0
+    total_tour_profit = 0
+    count_tours = 0
+    tours_in_month = []
+    
+    total_bk_rev = 0
+    total_bk_profit = 0
+    count_bks = 0
+    bks_in_month = []
+    
+    # Process Tours
+    if tours:
+        for t in tours:
+            t = dict(t)
+            try:
+                s_date = datetime.strptime(t['start_date'], '%d/%m/%Y')
+                if s_date.month == current_month and s_date.year == current_year:
+                    count_tours += 1
+                    
+                    final_price = float(t.get('final_tour_price', 0) or 0)
+                    child_price = float(t.get('child_price', 0) or 0)
+                    final_qty = float(t.get('final_qty', 0) or 0)
+                    child_qty = float(t.get('child_qty', 0) or 0)
+                    if final_qty == 0: final_qty = float(t.get('guest_count', 1))
+                    
+                    rev = (final_price * final_qty) + (child_price * child_qty)
+                    
+                    costs = items_map.get(t['id'], {'EST': 0, 'ACT': 0})
+                    est_cost = costs['EST']; act_cost = costs['ACT']
+                    
+                    if rev == 0:
+                        p_pct = t.get('est_profit_percent', 0) or 0
+                        t_pct = t.get('est_tax_percent', 0) or 0
+                        profit_est_val = est_cost * (p_pct/100)
+                        rev = (est_cost + profit_est_val) * (1 + t_pct/100)
+                    
+                    t_pct = t.get('est_tax_percent', 0) or 0
+                    net_rev = rev / (1 + t_pct/100) if (1 + t_pct/100) != 0 else rev
+                    prof = net_rev - act_cost
+                    
+                    total_tour_rev += rev; total_tour_profit += prof
+                    
+                    t_display = dict(t); t_display['revenue'] = rev; t_display['profit'] = prof
+                    tours_in_month.append(t_display)
+            except: pass
+
+    # Process Bookings
+    if bookings:
+        for b in bookings:
+            try:
+                c_date = datetime.strptime(str(b['created_at']).split(' ')[0], '%Y-%m-%d')
+                if c_date.month == current_month and c_date.year == current_year:
+                    count_bks += 1
+                    rev = float(b['selling_price'] or 0); prof = float(b['profit'] or 0)
+                    total_bk_rev += rev; total_bk_profit += prof
+                    b_display = dict(b); b_display['revenue'] = rev; b_display['profit'] = prof
+                    bks_in_month.append(b_display)
+            except: pass
+
+    # Display Metrics
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Tổng Doanh Thu", format_vnd(total_tour_rev + total_bk_rev) + " VND")
+    m2.metric("Tổng Lợi Nhuận", format_vnd(total_tour_profit + total_bk_profit) + " VND")
+    m3.metric("Số lượng Tour", count_tours)
+    m4.metric("Số lượng Booking", count_bks)
+    
+    st.divider()
+    c_left, c_right = st.columns(2)
+    with c_left:
+        st.subheader("📦 Tour trong tháng")
+        if tours_in_month:
+            df_t = pd.DataFrame(tours_in_month)[['start_date', 'tour_name', 'revenue', 'profit']]
+            df_t['revenue'] = df_t['revenue'].apply(lambda x: format_vnd(x) + " VND")
+            df_t['profit'] = df_t['profit'].apply(lambda x: format_vnd(x) + " VND")
+            st.dataframe(df_t, column_config={"start_date": "Ngày đi", "tour_name": "Tên đoàn", "revenue": "Doanh thu", "profit": "Lợi nhuận (TT)"}, use_container_width=True, hide_index=True)
+        else: st.info("Không có tour nào.")
+            
+    with c_right:
+        st.subheader("🔖 Booking trong tháng")
+        if bks_in_month:
+            df_b = pd.DataFrame(bks_in_month)[['created_at', 'name', 'revenue', 'profit']]
+            df_b['revenue'] = df_b['revenue'].apply(lambda x: format_vnd(x) + " VND")
+            df_b['profit'] = df_b['profit'].apply(lambda x: format_vnd(x) + " VND")
+            st.dataframe(df_b, column_config={"created_at": "Ngày tạo", "name": "Tên dịch vụ", "revenue": "Doanh thu", "profit": "Lợi nhuận"}, use_container_width=True, hide_index=True)
+        else: st.info("Không có booking nào.")
+
+# ==========================================
+# 4. GIAO DIỆN & LOGIC MODULES
+# ==========================================
+
 def render_login_page(comp):
     col_a, col_b, col_c = st.columns([1, 2, 1])
     with col_b:
@@ -1692,7 +1826,7 @@ def render_sidebar(comp):
             st.rerun()
         
         st.markdown("### 🗂️ Phân Hệ Quản Lý")
-        module = st.selectbox("Chọn chức năng:", ["🔖 Quản Lý Booking", "💰 Kiểm Soát Chi Phí", "💳 Quản Lý Công Nợ", "📦 Quản Lý Tour ", "🤝 Quản Lý Khách Hàng", "👥 Quản Lý Nhân Sự", "🔍 Tra cứu thông tin"], label_visibility="collapsed")
+        module = st.selectbox("Chọn chức năng:", ["🏠 Trang Chủ", "🔖 Quản Lý Booking", "💰 Kiểm Soát Chi Phí", "💳 Quản Lý Công Nợ", "📦 Quản Lý Tour ", "🤝 Quản Lý Khách Hàng", "👥 Quản Lý Nhân Sự", "🔍 Tra cứu thông tin"], label_visibility="collapsed")
         
         menu = None
         if module == "💰 Kiểm Soát Chi Phí":
@@ -5577,7 +5711,9 @@ def main():
     </div>
     ''', unsafe_allow_html=True)
 
-    if module == "💰 Kiểm Soát Chi Phí":
+    if module == "🏠 Trang Chủ":
+        render_dashboard()
+    elif module == "💰 Kiểm Soát Chi Phí":
         render_cost_control(menu)
     elif module == "💳 Quản Lý Công Nợ":
         render_debt_management()
