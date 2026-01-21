@@ -92,6 +92,28 @@ except ImportError:
     else:
         HAS_CV = False
 
+# --- DOCX LIB CHECK ---
+Document = None
+Pt = None
+Inches = None
+Cm = None
+WD_ALIGN_PARAGRAPH = None
+HAS_DOCX = False
+
+try:
+    from docx import Document
+    from docx.shared import Pt, Inches, Cm
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    HAS_DOCX = True
+except ImportError:
+    if auto_install("python-docx"):
+        try: 
+            from docx import Document
+            from docx.shared import Pt, Inches, Cm
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+            HAS_DOCX = True
+        except: pass
+
 # ==========================================
 # 1. CẤU HÌNH TRANG & KHỞI TẠO MÔI TRƯỜNG
 # ==========================================
@@ -336,7 +358,82 @@ def migrate_db_columns():
     except: pass
     try: c.execute("ALTER TABLE invoices ADD COLUMN cost_code TEXT")
     except: pass
+    
+    # --- Cập nhật cho Bàn Giao Tour (Mới) ---
+    try: c.execute("ALTER TABLE tours ADD COLUMN pickup_location TEXT")
+    except: pass
+    try: c.execute("ALTER TABLE tours ADD COLUMN pickup_time TEXT")
+    except: pass
+    try: c.execute("ALTER TABLE tours ADD COLUMN flight_code TEXT")
+    except: pass
+    try: c.execute("ALTER TABLE tours ADD COLUMN driver_name TEXT")
+    except: pass
+    try: c.execute("ALTER TABLE tours ADD COLUMN driver_phone TEXT")
+    except: pass
+    try: c.execute("ALTER TABLE tours ADD COLUMN car_plate TEXT")
+    except: pass
+    try: c.execute("ALTER TABLE tours ADD COLUMN car_type TEXT")
+    except: pass
+    try: c.execute("ALTER TABLE tours ADD COLUMN itinerary_summary TEXT")
+    except: pass
+    try: c.execute("ALTER TABLE tours ADD COLUMN guide_name TEXT")
+    except: pass
+    try: c.execute("ALTER TABLE tours ADD COLUMN guide_phone TEXT")
+    except: pass
     try: c.execute("CREATE TABLE IF NOT EXISTS ocr_learning (keyword TEXT UNIQUE, weight INTEGER DEFAULT 1)")
+    except: pass
+
+    # --- Bảng Điểm Tham Quan (Mới) ---
+    try: c.execute('''CREATE TABLE IF NOT EXISTS tour_sightseeings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tour_id INTEGER,
+        name TEXT,
+        address TEXT,
+        quantity INTEGER,
+        note TEXT
+    )''')
+    except: pass
+    
+    # --- Cập nhật cột Tài chính cho KS/NH (Mới) ---
+    try: c.execute("ALTER TABLE tour_hotels ADD COLUMN total_amount REAL DEFAULT 0")
+    except: pass
+    try: c.execute("ALTER TABLE tour_hotels ADD COLUMN deposit REAL DEFAULT 0")
+    except: pass
+    try: c.execute("ALTER TABLE tour_restaurants ADD COLUMN total_amount REAL DEFAULT 0")
+    except: pass
+    try: c.execute("ALTER TABLE tour_restaurants ADD COLUMN deposit REAL DEFAULT 0")
+    except: pass
+    # --- Cập nhật cột Ngày và Tài chính cho Nhà hàng/Tham quan (Mới nhất) ---
+    try: c.execute("ALTER TABLE tour_restaurants ADD COLUMN date TEXT")
+    except: pass
+    try: c.execute("ALTER TABLE tour_sightseeings ADD COLUMN date TEXT")
+    except: pass
+    try: c.execute("ALTER TABLE tour_sightseeings ADD COLUMN total_amount REAL DEFAULT 0")
+    except: pass
+    try: c.execute("ALTER TABLE tour_sightseeings ADD COLUMN deposit REAL DEFAULT 0")
+    except: pass
+
+    # --- Bảng Lịch Trình Tour (Mới) ---
+    try: c.execute('''CREATE TABLE IF NOT EXISTS tour_itineraries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tour_id INTEGER,
+        day_index INTEGER,
+        content TEXT
+    )''')
+    except: pass
+
+    # --- Bảng Chi Phí Phát Sinh (Mới) ---
+    try: c.execute('''CREATE TABLE IF NOT EXISTS tour_incurred_costs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tour_id INTEGER,
+        name TEXT,
+        unit TEXT,
+        quantity REAL,
+        price REAL,
+        total_amount REAL,
+        deposit REAL DEFAULT 0,
+        note TEXT
+    )''')
     except: pass
 
     # --- Bảng Booking Dịch Vụ (Mới) ---
@@ -396,6 +493,40 @@ def migrate_db_columns():
     except: pass
     try: c.execute("ALTER TABLE tours ADD COLUMN customer_phone TEXT")
     except: pass
+
+    # --- Cập nhật cho phần Danh sách & Dịch vụ (Mới) ---
+    try: c.execute("ALTER TABLE tours ADD COLUMN handover_checklist TEXT")
+    except: pass
+
+    c.execute('''CREATE TABLE IF NOT EXISTS tour_guests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tour_id INTEGER,
+        name TEXT,
+        dob TEXT,
+        hometown TEXT,
+        cccd TEXT,
+        type TEXT
+    )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS tour_hotels (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tour_id INTEGER,
+        hotel_name TEXT,
+        address TEXT,
+        phone TEXT,
+        total_rooms TEXT,
+        room_type TEXT
+    )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS tour_restaurants (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tour_id INTEGER,
+        meal_name TEXT,
+        restaurant_name TEXT,
+        address TEXT,
+        phone TEXT,
+        menu TEXT
+    )''')
 
     # --- Cập nhật mã tour cho dữ liệu cũ ---
     try:
@@ -1119,6 +1250,197 @@ def extract_data_smart(file_obj, is_image, doc_type="Hóa đơn"):
 
     info["raw_text"] = text_content
     return info, msg
+
+def create_handover_docx(tour_info, guests, hotels, restaurants, sightseeings, checklist_str):
+    if not HAS_DOCX: return None
+    
+    # Lấy thông tin công ty
+    comp_data = get_company_data()
+
+    doc = Document() # type: ignore
+    
+    # Styles
+    style = doc.styles['Normal']
+    font = style.font # type: ignore
+    font.name = 'Times New Roman'
+    font.size = Pt(11) # type: ignore
+    
+    # --- HEADER (COMPANY INFO) ---
+    header_table = doc.add_table(rows=1, cols=1)
+    header_table.autofit = False
+    header_table.allow_autofit = False # type: ignore
+    cell = header_table.cell(0, 0)
+    cell.width = Inches(6.5) # type: ignore
+    
+    p = cell.paragraphs[0]
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER # type: ignore
+    
+    run_comp = p.add_run(f"{comp_data['name'].upper()}\n")
+    run_comp.bold = True
+    run_comp.font.size = Pt(14) # type: ignore
+    run_comp.font.color.rgb = None # Black
+    
+    p.add_run(f"Địa chỉ: {comp_data['address']}\n")
+    p.add_run(f"Điện thoại: {comp_data['phone']}")
+    
+    doc.add_paragraph("_" * 60).alignment = WD_ALIGN_PARAGRAPH.CENTER # type: ignore
+    doc.add_paragraph()
+    
+    # --- TITLE ---
+    p_title = doc.add_heading('HỒ SƠ BÀN GIAO ĐOÀN', 0)
+    p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER # type: ignore
+    p_title.style.font.name = 'Times New Roman' # type: ignore
+    p_title.style.font.size = Pt(16) # type: ignore
+    p_title.style.font.bold = True # type: ignore
+    p_title.style.font.color.rgb = None # Black # type: ignore
+    
+    doc.add_paragraph()
+    
+    # --- I. THÔNG TIN CHUNG ---
+    doc.add_heading('I. THÔNG TIN CHUNG', level=1)
+    
+    table_info = doc.add_table(rows=0, cols=4)
+    table_info.style = 'Table Grid'
+    table_info.autofit = True
+    
+    def add_kv(k1, v1, k2, v2):
+        row = table_info.add_row()
+        c = row.cells
+        c[0].text = k1
+        c[0].paragraphs[0].runs[0].bold = True
+        c[1].text = str(v1)
+        c[2].text = k2
+        c[2].paragraphs[0].runs[0].bold = True
+        c[3].text = str(v2)
+
+    cust_info = f"{tour_info.get('customer_name','')} - {tour_info.get('customer_phone','')}"
+    
+    add_kv("Tên đoàn:", tour_info['tour_name'], "Mã đoàn:", tour_info['tour_code'])
+    add_kv("Ngày đi:", tour_info['start_date'], "Ngày về:", tour_info['end_date'])
+    add_kv("Số lượng khách:", str(tour_info['guest_count']), "Sales:", tour_info['sale_name'])
+    
+    # Row for Customer
+    r = table_info.add_row()
+    r.cells[0].text = "Khách hàng:"
+    r.cells[0].paragraphs[0].runs[0].bold = True
+    r.cells[1].merge(r.cells[3])
+    r.cells[1].text = cust_info
+    
+    doc.add_paragraph()
+    
+    # --- II. DANH SÁCH ĐOÀN ---
+    doc.add_heading('II. DANH SÁCH ĐOÀN', level=1)
+    if guests:
+        table = doc.add_table(rows=1, cols=5)
+        table.style = 'Table Grid'
+        hdr_cells = table.rows[0].cells
+        headers = ['STT', 'Họ và tên', 'Ngày sinh', 'Số CCCD', 'Phân loại']
+        for i, h in enumerate(headers): 
+            hdr_cells[i].text = h
+            hdr_cells[i].paragraphs[0].runs[0].bold = True
+            hdr_cells[i].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER # type: ignore
+            
+        for i, g in enumerate(guests):
+            row_cells = table.add_row().cells
+            row_cells[0].text = str(i + 1)
+            row_cells[1].text = str(g['name'])
+            row_cells[2].text = str(g['dob'])
+            row_cells[3].text = str(g['cccd'])
+            row_cells[4].text = str(g['type'])
+    else: doc.add_paragraph("(Chưa có danh sách đoàn)")
+    doc.add_paragraph()
+        
+    # --- III. KHÁCH SẠN ---
+    doc.add_heading('III. THÔNG TIN LƯU TRÚ', level=1)
+    if hotels:
+        table_h = doc.add_table(rows=1, cols=7)
+        table_h.style = 'Table Grid'
+        hdr = table_h.rows[0].cells
+        for i, h in enumerate(['Tên Khách sạn', 'Địa chỉ & Liên hệ', 'Tổng phòng', 'Loại phòng', 'Tổng tiền', 'Đã cọc', 'Còn lại']):
+            hdr[i].text = h
+            hdr[i].paragraphs[0].runs[0].bold = True
+            
+        for h in hotels:
+            total = float(h.get('total_amount', 0) or 0)
+            dep = float(h.get('deposit', 0) or 0)
+            rem = total - dep
+            row = table_h.add_row().cells
+            row[0].text = f"🏨 {h['hotel_name']}"
+            row[1].text = f"{h['address']}\nSĐT: {h['phone']}"
+            row[2].text = str(h['total_rooms'])
+            row[3].text = str(h['room_type'])
+            row[4].text = "{:,.0f}".format(total)
+            row[5].text = "{:,.0f}".format(dep)
+            row[6].text = "{:,.0f}".format(rem)
+    else: doc.add_paragraph("(Chưa có thông tin khách sạn)")
+    doc.add_paragraph()
+
+    # --- IV. NHÀ HÀNG ---
+    doc.add_heading('IV. ẨM THỰC & THỰC ĐƠN', level=1)
+    if restaurants:
+        table_r = doc.add_table(rows=1, cols=7)
+        table_r.style = 'Table Grid'
+        hdr = table_r.rows[0].cells
+        for i, h in enumerate(['Bữa ăn', 'Nhà hàng', 'Liên hệ', 'Thực đơn', 'Tổng tiền', 'Đã cọc', 'Còn lại']):
+            hdr[i].text = h
+            hdr[i].paragraphs[0].runs[0].bold = True
+            
+        for r in restaurants:
+            total = float(r.get('total_amount', 0) or 0)
+            dep = float(r.get('deposit', 0) or 0)
+            rem = total - dep
+            row = table_r.add_row().cells
+            row[0].text = f"🍽️ {r['meal_name']}"
+            row[1].text = str(r['restaurant_name'])
+            row[2].text = f"{r['address']}\nSĐT: {r['phone']}"
+            row[3].text = str(r['menu'])
+            row[4].text = "{:,.0f}".format(total)
+            row[5].text = "{:,.0f}".format(dep)
+            row[6].text = "{:,.0f}".format(rem)
+    else: doc.add_paragraph("(Chưa có thông tin nhà hàng)")
+    doc.add_paragraph()
+
+    # --- V. ĐIỂM THAM QUAN ---
+    doc.add_heading('V. ĐIỂM THAM QUAN', level=1)
+    if sightseeings:
+        table_s = doc.add_table(rows=1, cols=4)
+        table_s.style = 'Table Grid'
+        hdr = table_s.rows[0].cells
+        for i, h in enumerate(['Tên địa điểm', 'Địa chỉ', 'Số lượng', 'Lưu ý']):
+            hdr[i].text = h
+            hdr[i].paragraphs[0].runs[0].bold = True
+            
+        for s in sightseeings:
+            row = table_s.add_row().cells
+            row[0].text = f"📍 {s['name']}"
+            row[1].text = str(s['address'])
+            row[2].text = str(s['quantity'])
+            row[3].text = str(s['note'])
+    else: doc.add_paragraph("(Chưa có thông tin điểm tham quan)")
+    doc.add_paragraph()
+        
+    # --- VI. CHECKLIST ---
+    doc.add_heading('VI. CHECKLIST BÀN GIAO', level=1)
+    checked_items = checklist_str.split(',') if checklist_str else []
+    all_items = ["Chương trình đóng mộc", "Danh sách đóng mộc", "Bảo hiểm du lịch", "Thực đơn đóng mộc", "Vé máy bay", "Xác nhận khu du lịch/nhà hàng (Nếu có)", "Hợp đồng hướng dẫn"]
+    
+    table_c = doc.add_table(rows=0, cols=2)
+    for item in all_items:
+        mark = "☑" if item in checked_items else "☐"
+        row = table_c.add_row()
+        row.cells[0].text = mark
+        row.cells[0].width = Pt(20) # type: ignore
+        row.cells[1].text = item
+        
+    # Footer
+    doc.add_paragraph("\n")
+    p_foot = doc.add_paragraph(f"Ngày xuất hồ sơ: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+    p_foot.alignment = WD_ALIGN_PARAGRAPH.RIGHT # type: ignore
+    
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer
 
 # ==========================================
 # 4. GIAO DIỆN & LOGIC MODULES
@@ -2737,7 +3059,7 @@ def render_tour_management():
     st.title("📦 Quản Lý Tour ")
     
     # Sử dụng Tabs theo yêu cầu
-    tab_est, tab_act, tab_hist, tab_rpt = st.tabs(["📝 Dự Toán Chi Phí", "💸 Quyết Toán Tour", "📜 Lịch sử Tour", "📈 Tổng Hợp Lợi Nhuận"])
+    tab_est, tab_list_srv, tab_act, tab_hist, tab_rpt = st.tabs(["📝 Dự Toán Chi Phí", "📋 Danh sách & Dịch vụ", "💸 Quyết Toán Tour", "📜 Lịch sử Tour", "📈 Tổng Hợp Lợi Nhuận"])
     
     # Lấy thông tin user hiện tại để lọc
     current_user_info_tour = st.session_state.get("user_info", {})
@@ -3286,7 +3608,7 @@ def render_tour_management():
 
             # --- Nút Chỉnh sửa / Lưu ---
             if st.session_state.est_edit_mode:
-                if st.button("💾 LƯU DỰ TOÁN", type="primary", use_container_width=True):
+                if st.button("💾 Lưu và chuyển sang phần Danh sách và dịch vụ", type="primary", use_container_width=True):
                     # 1. Update Tour Meta
                     run_query("UPDATE tours SET est_profit_percent=?, est_tax_percent=?, final_tour_price=?, child_price=?, final_qty=?, child_qty=? WHERE id=?", (p_percent, t_percent, final_tour_price_val, child_price_val, final_qty_val, child_qty_val, tour_id), commit=True)
                     
@@ -3323,12 +3645,881 @@ def render_tour_management():
 
                     if "est_df_temp" in st.session_state: del st.session_state.est_df_temp
                     st.session_state.est_edit_mode = False
-                    st.success("Đã lưu dự toán thành công!")
+                    st.success("Đã lưu dự toán thành công! Hãy chuyển sang tab 'Danh sách & Dịch vụ'.")
                     time.sleep(1); st.rerun()
             else:
                 if st.button("✏️ Chỉnh sửa Dự toán", use_container_width=True):
                     st.session_state.est_edit_mode = True
                     st.rerun()
+
+    # ---------------- TAB MỚI: DANH SÁCH & DỊCH VỤ ----------------
+    with tab_list_srv:
+        st.subheader("📋 Danh sách Đoàn & Dịch vụ")
+        
+        def clean_vnd_val(x):
+            if isinstance(x, (int, float)): return float(x)
+            if isinstance(x, str):
+                return float(x.replace('.', '').replace(',', '').replace(' VND', '').strip()) if x.strip() else 0.0
+            return 0.0
+
+        def clean_df_cols(df, cols):
+            for col in cols:
+                if col in df.columns:
+                    df[col] = df[col].apply(clean_vnd_val)
+            return df
+
+        selected_tour_ls_label = st.selectbox("Chọn Đoàn:", list(tour_options.keys()) if tour_options else [], key="sel_tour_ls")
+        
+        if selected_tour_ls_label:
+            tour_id_ls = tour_options[selected_tour_ls_label]
+            tour_info_ls = next((t for t in all_tours if t['id'] == tour_id_ls), None)
+            
+            if tour_info_ls:
+                tour_info_ls = dict(tour_info_ls)
+                
+                # --- SESSION STATE INIT FOR LIST & SERVICES (AUTO CALCULATION) ---
+                if "current_tour_id_ls" not in st.session_state or st.session_state.current_tour_id_ls != tour_id_ls or "ls_incurred_temp" not in st.session_state:
+                    st.session_state.current_tour_id_ls = tour_id_ls
+                    
+                    # Load Hotels
+                    hotels = run_query("SELECT * FROM tour_hotels WHERE tour_id=?", (tour_id_ls,))
+                    df_h = pd.DataFrame([dict(r) for r in hotels]) if hotels else pd.DataFrame(columns=['hotel_name', 'address', 'phone', 'total_rooms', 'room_type', 'total_amount', 'deposit'])
+                    if df_h.empty: df_h = pd.DataFrame(columns=['hotel_name', 'address', 'phone', 'total_rooms', 'room_type', 'total_amount', 'deposit'])
+                    for col in ['total_amount', 'deposit']:
+                        if col not in df_h.columns: df_h[col] = 0.0
+                    st.session_state.ls_hotels_temp = df_h[['hotel_name', 'address', 'phone', 'total_rooms', 'room_type', 'total_amount', 'deposit']]
+
+                    # Load Restaurants
+                    rests = run_query("SELECT * FROM tour_restaurants WHERE tour_id=?", (tour_id_ls,))
+                    if not rests:
+                        est_meals = run_query("SELECT description FROM tour_items WHERE tour_id=? AND item_type='EST' AND (category LIKE '%Ăn%' OR description LIKE '%Bữa%' OR description LIKE '%Ăn%')", (tour_id_ls,))
+                        if est_meals:
+                            df_r = pd.DataFrame([{'date': '', 'meal_name': m['description'], 'restaurant_name': '', 'address': '', 'phone': '', 'menu': '', 'total_amount': 0, 'deposit': 0} for m in est_meals])
+                        else:
+                            df_r = pd.DataFrame(columns=['date', 'meal_name', 'restaurant_name', 'address', 'phone', 'menu', 'total_amount', 'deposit'])
+                    else:
+                        df_r = pd.DataFrame([dict(r) for r in rests])
+                    
+                    for col in ['total_amount', 'deposit']:
+                        if col not in df_r.columns: df_r[col] = 0.0
+                    if 'date' not in df_r.columns: df_r['date'] = ''
+                    st.session_state.ls_rests_temp = df_r[['date', 'meal_name', 'restaurant_name', 'address', 'phone', 'menu', 'total_amount', 'deposit']]
+
+                    # Load Sightseeings
+                    sights = run_query("SELECT * FROM tour_sightseeings WHERE tour_id=?", (tour_id_ls,))
+                    df_s = pd.DataFrame([dict(r) for r in sights]) if sights else pd.DataFrame(columns=['date', 'name', 'address', 'quantity', 'total_amount', 'deposit', 'note'])
+                    if df_s.empty: df_s = pd.DataFrame(columns=['date', 'name', 'address', 'quantity', 'total_amount', 'deposit', 'note'])
+                    if 'date' not in df_s.columns: df_s['date'] = ''
+                    if 'total_amount' not in df_s.columns: df_s['total_amount'] = 0.0
+                    if 'deposit' not in df_s.columns: df_s['deposit'] = 0.0
+                    st.session_state.ls_sight_temp = df_s[['date', 'name', 'address', 'quantity', 'total_amount', 'deposit', 'note']]
+
+                    # Load Incurred Costs
+                    incurred = run_query("SELECT * FROM tour_incurred_costs WHERE tour_id=?", (tour_id_ls,))
+                    df_inc = pd.DataFrame([dict(r) for r in incurred]) if incurred else pd.DataFrame(columns=['name', 'unit', 'quantity', 'price', 'total_amount', 'deposit', 'note'])
+                    if df_inc.empty: df_inc = pd.DataFrame(columns=['name', 'unit', 'quantity', 'price', 'total_amount', 'deposit', 'note'])
+                    st.session_state.ls_incurred_temp = df_inc[['name', 'unit', 'quantity', 'price', 'total_amount', 'deposit', 'note']]
+
+                # 1. DANH SÁCH ĐOÀN
+                st.markdown("##### 1. Danh sách đoàn")
+                
+                # --- [NEW] THÔNG TIN BÀN GIAO & ĐÓN TIỄN ---
+                with st.expander("🚌 Thông Tin Bàn Giao & Đón Tiễn (Điều hành)", expanded=False):
+                    with st.form(f"handover_form_{tour_id_ls}"):
+                        c_h1, c_h2, c_h3 = st.columns(3)
+                        pk_loc = c_h1.text_input("Điểm đón", value=tour_info_ls.get('pickup_location', ''))
+                        pk_time = c_h2.text_input("Thời gian đón", value=tour_info_ls.get('pickup_time', ''))
+                        fl_code = c_h3.text_area("Chuyến bay/Tàu", value=tour_info_ls.get('flight_code', ''), height=68)
+                        
+                        c_d1, c_d2, c_d3, c_d4 = st.columns(4)
+                        drv_name = c_d1.text_input("Tên lái xe", value=tour_info_ls.get('driver_name', ''))
+                        drv_phone = c_d2.text_input("SĐT Lái xe", value=tour_info_ls.get('driver_phone', ''))
+                        car_plate = c_d3.text_input("Biển số xe", value=tour_info_ls.get('car_plate', ''))
+                        car_type = c_d4.text_input("Loại xe", value=tour_info_ls.get('car_type', ''))
+                        
+                        c_g1, c_g2 = st.columns(2)
+                        gd_name = c_g1.text_input("Tên HDV", value=tour_info_ls.get('guide_name', ''))
+                        gd_phone = c_g2.text_input("SĐT HDV", value=tour_info_ls.get('guide_phone', ''))
+
+                        if st.form_submit_button("💾 Lưu thông tin vận hành"):
+                            run_query("""UPDATE tours SET 
+                                pickup_location=?, pickup_time=?, flight_code=?, 
+                                driver_name=?, driver_phone=?, car_plate=?, car_type=?, 
+                                guide_name=?, guide_phone=? WHERE id=?""",
+                                (pk_loc, pk_time, fl_code, drv_name, drv_phone, car_plate, car_type, gd_name, gd_phone, tour_id_ls), commit=True)
+                            st.success("Đã cập nhật thông tin điều hành!"); time.sleep(0.5); st.rerun()
+
+                    st.markdown("##### 📅 Lịch trình chi tiết")
+                    try:
+                        s_raw = tour_info_ls.get('start_date', '')
+                        e_raw = tour_info_ls.get('end_date', '')
+                        
+                        def try_parse_date(d_str):
+                            if not d_str: return None
+                            for fmt in ('%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y'):
+                                try: return datetime.strptime(str(d_str).strip(), fmt)
+                                except: continue
+                            return None
+
+                        s_d = try_parse_date(s_raw)
+                        e_d = try_parse_date(e_raw)
+
+                        if s_d and e_d:
+                            num_days = (e_d - s_d).days + 1
+                            if num_days < 1: num_days = 1
+                        else:
+                            num_days = 1
+                            s_d = datetime.now()
+                    except: 
+                        num_days = 1
+                        s_d = datetime.now()
+                    
+                    exist_itin = run_query("SELECT * FROM tour_itineraries WHERE tour_id=? ORDER BY day_index", (tour_id_ls,))
+                    itin_map = {r['day_index']: r['content'] for r in exist_itin} if exist_itin else {}
+                    
+                    itin_data = []
+                    for i in range(num_days):
+                        d_str = (s_d + pd.Timedelta(days=i)).strftime('%d/%m/%Y')
+                        itin_data.append({
+                            "day_label": f"Ngày {i+1} ({d_str})",
+                            "content": itin_map.get(i, ""),
+                            "day_index": i
+                        })
+                    
+                    df_itin = pd.DataFrame(itin_data)
+                    edited_itin = st.data_editor(
+                        df_itin,
+                        column_config={
+                            "day_label": st.column_config.TextColumn("Ngày", disabled=True),
+                            "content": st.column_config.TextColumn("Nội dung lịch trình", width="large"),
+                            "day_index": st.column_config.NumberColumn("Hidden", disabled=True)
+                        },
+                        column_order=("day_label", "content"),
+                        use_container_width=True,
+                        hide_index=True,
+                        key=f"itin_ed_{tour_id_ls}"
+                    )
+                    
+                    if st.button("💾 Lưu lịch trình", key=f"save_itin_{tour_id_ls}"):
+                        run_query("DELETE FROM tour_itineraries WHERE tour_id=?", (tour_id_ls,), commit=True)
+                        data_itin = [(tour_id_ls, r['day_index'], r['content']) for _, r in edited_itin.iterrows()]
+                        if data_itin:
+                            run_query_many("INSERT INTO tour_itineraries (tour_id, day_index, content) VALUES (?,?,?)", data_itin)
+                        st.success("Đã lưu lịch trình!"); time.sleep(0.5); st.rerun()
+
+                guests = run_query("SELECT * FROM tour_guests WHERE tour_id=?", (tour_id_ls,))
+                df_guests = pd.DataFrame([dict(r) for r in guests]) if guests else pd.DataFrame(columns=['name', 'dob', 'hometown', 'cccd', 'type'])
+                if df_guests.empty:
+                    df_guests = pd.DataFrame(columns=['name', 'dob', 'hometown', 'cccd', 'type'])
+                else:
+                    df_guests = df_guests[['name', 'dob', 'hometown', 'cccd', 'type']]
+
+                edited_guests = st.data_editor(
+                    df_guests,
+                    num_rows="dynamic",
+                    key="guest_editor",
+                    column_config={
+                        "name": st.column_config.TextColumn("Họ và tên", required=True),
+                        "dob": st.column_config.TextColumn("Ngày sinh"),
+                        "hometown": st.column_config.TextColumn("Quê quán"),
+                        "cccd": st.column_config.TextColumn("Số CCCD"),
+                        "type": st.column_config.SelectboxColumn("Phân loại", options=["Khách", "Nội bộ", "HDV"], required=True)
+                    },
+                    use_container_width=True
+                )
+
+                # 2. DANH SÁCH PHÒNG KHÁCH SẠN
+                st.markdown("##### 2. Danh sách phòng Khách sạn")
+                df_hotels = st.session_state.ls_hotels_temp.copy()
+                
+                # Calculate remaining for display
+                df_hotels['total_amount'] = pd.to_numeric(df_hotels['total_amount'], errors='coerce').fillna(0)
+                df_hotels['deposit'] = pd.to_numeric(df_hotels['deposit'], errors='coerce').fillna(0)
+                df_hotels['remaining'] = df_hotels['total_amount'].fillna(0) - df_hotels['deposit'].fillna(0)
+
+                # Format hiển thị tiền tệ
+                df_hotels['total_amount'] = df_hotels['total_amount'].apply(lambda x: format_vnd(x) + " VND")
+                df_hotels['deposit'] = df_hotels['deposit'].apply(lambda x: format_vnd(x) + " VND")
+                df_hotels['remaining'] = df_hotels['remaining'].apply(lambda x: format_vnd(x) + " VND")
+
+                edited_hotels = st.data_editor(
+                    df_hotels,
+                    num_rows="dynamic",
+                    key="hotel_editor",
+                    column_config={
+                        "hotel_name": st.column_config.TextColumn("Tên Khách sạn", required=True),
+                        "address": "Địa chỉ",
+                        "phone": "SĐT",
+                        "total_rooms": st.column_config.TextColumn("Tổng số phòng"),
+                        "room_type": st.column_config.TextColumn("Loại phòng"),
+                        "total_amount": st.column_config.TextColumn("Tổng tiền"),
+                        "deposit": st.column_config.TextColumn("Đã ứng/cọc"),
+                        "remaining": st.column_config.TextColumn("Còn lại (Guide trả)", disabled=True)
+                    },
+                    use_container_width=True
+                )
+                
+                # Làm sạch dữ liệu sau khi edit (Chuyển về số)
+                edited_hotels = clean_df_cols(edited_hotels, ['total_amount', 'deposit'])
+
+                # Detect changes for Hotels
+                cols_h = ['hotel_name', 'address', 'phone', 'total_rooms', 'room_type', 'total_amount', 'deposit']
+                if not edited_hotels[cols_h].equals(st.session_state.ls_hotels_temp[cols_h]):
+                    st.session_state.ls_hotels_temp = edited_hotels[cols_h]
+                    st.rerun()
+
+                # 3. MENU NHÀ HÀNG
+                st.markdown("##### 3. Menu nhà hàng")
+                df_rests = st.session_state.ls_rests_temp.copy()
+                
+                df_rests['total_amount'] = pd.to_numeric(df_rests['total_amount'], errors='coerce').fillna(0)
+                df_rests['deposit'] = pd.to_numeric(df_rests['deposit'], errors='coerce').fillna(0)
+                df_rests['remaining'] = df_rests['total_amount'].fillna(0) - df_rests['deposit'].fillna(0)
+
+                # Format hiển thị tiền tệ
+                df_rests['total_amount'] = df_rests['total_amount'].apply(lambda x: format_vnd(x) + " VND")
+                df_rests['deposit'] = df_rests['deposit'].apply(lambda x: format_vnd(x) + " VND")
+                df_rests['remaining'] = df_rests['remaining'].apply(lambda x: format_vnd(x) + " VND")
+
+                edited_rests = st.data_editor(
+                    df_rests,
+                    num_rows="dynamic",
+                    key="rest_editor",
+                    column_config={
+                        "date": st.column_config.TextColumn("Ngày"),
+                        "meal_name": st.column_config.TextColumn("Bữa ăn (Dự toán)", required=True),
+                        "restaurant_name": "Tên nhà hàng",
+                        "address": "Địa chỉ",
+                        "phone": "SĐT",
+                        "menu": st.column_config.TextColumn("Thực đơn", width="large"),
+                        "total_amount": st.column_config.TextColumn("Tổng tiền"),
+                        "deposit": st.column_config.TextColumn("Đã ứng/cọc"),
+                        "remaining": st.column_config.TextColumn("Còn lại (Guide trả)", disabled=True)
+                    },
+                    column_order=("date", "meal_name", "restaurant_name", "address", "phone", "menu", "total_amount", "deposit", "remaining"),
+                    use_container_width=True
+                )
+                
+                # Làm sạch dữ liệu sau khi edit
+                edited_rests = clean_df_cols(edited_rests, ['total_amount', 'deposit'])
+
+                cols_r = ['date', 'meal_name', 'restaurant_name', 'address', 'phone', 'menu', 'total_amount', 'deposit']
+                if not edited_rests[cols_r].equals(st.session_state.ls_rests_temp[cols_r]):
+                    st.session_state.ls_rests_temp = edited_rests[cols_r]
+                    st.rerun()
+
+                # 4. ĐIỂM THAM QUAN (MỚI)
+                st.markdown("##### 4. Điểm tham quan")
+                df_sightseeings = st.session_state.ls_sight_temp.copy()
+                
+                df_sightseeings['total_amount'] = pd.to_numeric(df_sightseeings['total_amount'], errors='coerce').fillna(0)
+                df_sightseeings['deposit'] = pd.to_numeric(df_sightseeings['deposit'], errors='coerce').fillna(0)
+                df_sightseeings['remaining'] = df_sightseeings['total_amount'].fillna(0) - df_sightseeings['deposit'].fillna(0)
+
+                # Format hiển thị tiền tệ
+                df_sightseeings['total_amount'] = df_sightseeings['total_amount'].apply(lambda x: format_vnd(x) + " VND")
+                df_sightseeings['deposit'] = df_sightseeings['deposit'].apply(lambda x: format_vnd(x) + " VND")
+                df_sightseeings['remaining'] = df_sightseeings['remaining'].apply(lambda x: format_vnd(x) + " VND")
+
+                edited_sightseeings = st.data_editor(
+                    df_sightseeings,
+                    num_rows="dynamic",
+                    key="sightseeing_editor",
+                    column_config={
+                        "date": st.column_config.TextColumn("Ngày"),
+                        "name": st.column_config.TextColumn("Tên địa điểm", required=True),
+                        "address": "Địa chỉ",
+                        "quantity": st.column_config.NumberColumn("Số lượng", min_value=0),
+                        "total_amount": st.column_config.TextColumn("Tổng tiền"),
+                        "deposit": st.column_config.TextColumn("Đã cọc"),
+                        "remaining": st.column_config.TextColumn("Còn lại", disabled=True),
+                        "note": st.column_config.TextColumn("Lưu ý")
+                    },
+                    column_order=("date", "name", "address", "quantity", "total_amount", "deposit", "remaining", "note"),
+                    use_container_width=True
+                )
+                
+                # Làm sạch dữ liệu sau khi edit
+                edited_sightseeings = clean_df_cols(edited_sightseeings, ['total_amount', 'deposit'])
+
+                cols_s = ['date', 'name', 'address', 'quantity', 'total_amount', 'deposit', 'note']
+                if not edited_sightseeings[cols_s].equals(st.session_state.ls_sight_temp[cols_s]):
+                    st.session_state.ls_sight_temp = edited_sightseeings[cols_s]
+                    st.rerun()
+
+                # 5. CHI PHÍ PHÁT SINH (Đã đổi thứ tự lên trên)
+                st.divider()
+                st.markdown("##### 5. Chi phí phát sinh (Nước, Sim, Banner...)")
+                df_incurred = st.session_state.ls_incurred_temp.copy()
+                
+                # Clean numbers for display
+                df_incurred['price'] = pd.to_numeric(df_incurred['price'], errors='coerce').fillna(0)
+                df_incurred['quantity'] = pd.to_numeric(df_incurred['quantity'], errors='coerce').fillna(0)
+                df_incurred['total_amount'] = df_incurred['price'] * df_incurred['quantity']
+                df_incurred['deposit'] = pd.to_numeric(df_incurred['deposit'], errors='coerce').fillna(0)
+                df_incurred['remaining'] = df_incurred['total_amount'] - df_incurred['deposit']
+
+                # Format
+                df_incurred['price'] = df_incurred['price'].apply(lambda x: format_vnd(x) + " VND").astype(str)
+                df_incurred['total_amount'] = df_incurred['total_amount'].apply(lambda x: format_vnd(x) + " VND").astype(str)
+                df_incurred['deposit'] = df_incurred['deposit'].apply(lambda x: format_vnd(x) + " VND").astype(str)
+                df_incurred['remaining'] = df_incurred['remaining'].apply(lambda x: format_vnd(x) + " VND").astype(str)
+
+                edited_incurred = st.data_editor(
+                    df_incurred,
+                    num_rows="dynamic",
+                    key="incurred_editor",
+                    column_config={
+                        "name": st.column_config.TextColumn("Tên chi phí", required=True),
+                        "unit": st.column_config.TextColumn("ĐVT"),
+                        "quantity": st.column_config.NumberColumn("Số lượng", min_value=0),
+                        "price": st.column_config.TextColumn("Đơn giá"),
+                        "total_amount": st.column_config.TextColumn("Thành tiền", disabled=True),
+                        "deposit": st.column_config.TextColumn("Đã ứng/cọc"),
+                        "remaining": st.column_config.TextColumn("Còn lại", disabled=True),
+                        "note": st.column_config.TextColumn("Ghi chú")
+                    },
+                    column_order=("name", "unit", "quantity", "price", "total_amount", "deposit", "remaining", "note"),
+                    use_container_width=True
+                )
+                
+                # Clean data back
+                def clean_vnd_val_inc(x):
+                    if isinstance(x, (int, float)): return float(x)
+                    if isinstance(x, str):
+                        return float(x.replace('.', '').replace(',', '').replace(' VND', '').strip()) if x.strip() else 0.0
+                    return 0.0
+
+                edited_incurred['price'] = edited_incurred['price'].apply(clean_vnd_val_inc)
+                edited_incurred['deposit'] = edited_incurred['deposit'].apply(clean_vnd_val_inc)
+                
+                cols_inc = ['name', 'unit', 'quantity', 'price', 'total_amount', 'deposit', 'note']
+                if not edited_incurred[cols_inc].equals(st.session_state.ls_incurred_temp[cols_inc]):
+                     st.session_state.ls_incurred_temp = edited_incurred[cols_inc]
+                     st.rerun()
+
+                st.write("")
+                # 6. CHECKLIST BÀN GIAO (Đã đổi thứ tự xuống dưới)
+                st.markdown("##### 6. Checklist bàn giao hồ sơ HDV")
+                checklist_items = ["Chương trình đóng mộc", "Danh sách đóng mộc", "Bảo hiểm du lịch", "Thực đơn đóng mộc", "Vé máy bay", "Xác nhận khu du lịch/nhà hàng (Nếu có)", "Hợp đồng hướng dẫn"]
+                
+                current_checklist = dict(tour_info_ls).get('handover_checklist', '')
+                checked_items = current_checklist.split(',') if current_checklist else []
+                
+                cols_chk = st.columns(2)
+                new_checked_list = []
+                all_checked = True
+                
+                for i, item in enumerate(checklist_items):
+                    is_checked = item in checked_items
+                    if cols_chk[i % 2].checkbox(item, value=is_checked, key=f"chk_ho_{tour_id_ls}_{i}"):
+                        new_checked_list.append(item)
+                    else:
+                        all_checked = False
+
+                st.write("")
+                st.markdown("##### Tạm ứng cho HDV")
+                
+                # [FIX] Tự động tính tổng tiền còn lại để làm Tạm ứng
+                def calc_rem_total(df):
+                    if df.empty: return 0.0
+                    def clean_val(x):
+                        if isinstance(x, (int, float)): return float(x)
+                        try: return float(str(x).replace('.', '').replace(' VND', '').strip())
+                        except: return 0.0
+                    
+                    t = df['total_amount'].apply(clean_val)
+                    d = df['deposit'].apply(clean_val)
+                    return (t - d).sum()
+
+                rem_h = calc_rem_total(st.session_state.ls_hotels_temp)
+                rem_r = calc_rem_total(st.session_state.ls_rests_temp)
+                rem_s = calc_rem_total(st.session_state.ls_sight_temp)
+                
+                # Tính riêng cho Incurred vì cần tính lại từ price * qty
+                df_inc_c = st.session_state.ls_incurred_temp.copy()
+                q_i = pd.to_numeric(df_inc_c['quantity'], errors='coerce').fillna(0)
+                p_i = pd.to_numeric(df_inc_c['price'], errors='coerce').fillna(0)
+                d_i = pd.to_numeric(df_inc_c['deposit'], errors='coerce').fillna(0)
+                rem_i = ((q_i * p_i) - d_i).sum()
+                
+                total_rem_all = rem_h + rem_r + rem_s + rem_i
+                
+                tam_ung = float(total_rem_all)
+                st.markdown(f"""<div style="background-color: #e8f5e9; padding: 15px; border-radius: 10px; margin-top: 10px; border: 1px solid #c8e6c9;"><div style="display:flex; justify-content:space-between; font-size: 1.3em; color: #2e7d32;"><span><b>TẠM ỨNG CHO HDV</b></span> <b>{format_vnd(tam_ung)} VND</b></div></div>""", unsafe_allow_html=True)
+                
+                st.write("")
+                st.write("")
+                c_save, c_export = st.columns([1, 2])
+                
+                if c_save.button("💾 Lưu và chờ quyết toán", type="primary", use_container_width=True):
+                    if not all_checked:
+                        st.error("⛔ Bạn chưa hoàn thành Checklist bàn giao! Vui lòng kiểm tra đủ các mục trước khi lưu.")
+                    else:
+                        # Lưu Danh sách đoàn
+                        run_query("DELETE FROM tour_guests WHERE tour_id=?", (tour_id_ls,), commit=True)
+                        if not edited_guests.empty:
+                            data_guests = [(tour_id_ls, r['name'], r['dob'], r['hometown'], r['cccd'], r['type']) for _, r in edited_guests.iterrows() if r['name']]
+                            if data_guests: run_query_many("INSERT INTO tour_guests (tour_id, name, dob, hometown, cccd, type) VALUES (?,?,?,?,?,?)", data_guests)
+                        
+                        # Lưu Khách sạn
+                        run_query("DELETE FROM tour_hotels WHERE tour_id=?", (tour_id_ls,), commit=True)
+                        if not edited_hotels.empty:
+                            data_hotels = [(tour_id_ls, r['hotel_name'], r['address'], r['phone'], r['total_rooms'], r['room_type'], r['total_amount'], r['deposit']) for _, r in edited_hotels.iterrows() if r['hotel_name']]
+                            if data_hotels: run_query_many("INSERT INTO tour_hotels (tour_id, hotel_name, address, phone, total_rooms, room_type, total_amount, deposit) VALUES (?,?,?,?,?,?,?,?)", data_hotels)
+
+                        # Lưu Nhà hàng
+                        run_query("DELETE FROM tour_restaurants WHERE tour_id=?", (tour_id_ls,), commit=True)
+                        if not edited_rests.empty:
+                            data_rests = [(tour_id_ls, r['meal_name'], r['restaurant_name'], r['address'], r['phone'], r['menu'], r['total_amount'], r['deposit'], r['date']) for _, r in edited_rests.iterrows() if r['meal_name']]
+                            if data_rests: run_query_many("INSERT INTO tour_restaurants (tour_id, meal_name, restaurant_name, address, phone, menu, total_amount, deposit, date) VALUES (?,?,?,?,?,?,?,?,?)", data_rests)
+
+                        # Lưu Điểm tham quan
+                        run_query("DELETE FROM tour_sightseeings WHERE tour_id=?", (tour_id_ls,), commit=True)
+                        if not edited_sightseeings.empty:
+                            data_sightseeings = [(tour_id_ls, r['name'], r['address'], r['quantity'], r['note'], r['date'], r['total_amount'], r['deposit']) for _, r in edited_sightseeings.iterrows() if r['name']]
+                            if data_sightseeings: run_query_many("INSERT INTO tour_sightseeings (tour_id, name, address, quantity, note, date, total_amount, deposit) VALUES (?,?,?,?,?,?,?,?)", data_sightseeings)
+
+                        # Lưu Chi phí phát sinh
+                        run_query("DELETE FROM tour_incurred_costs WHERE tour_id=?", (tour_id_ls,), commit=True)
+                        if not edited_incurred.empty:
+                            data_inc = [(tour_id_ls, r['name'], r['unit'], r['quantity'], r['price'], r['quantity']*r['price'], r['deposit'], r['note']) for _, r in edited_incurred.iterrows() if r['name']]
+                            if data_inc: run_query_many("INSERT INTO tour_incurred_costs (tour_id, name, unit, quantity, price, total_amount, deposit, note) VALUES (?,?,?,?,?,?,?,?)", data_inc)
+
+                        # Lưu Checklist
+                        checklist_str = ",".join(new_checked_list)
+                        run_query("UPDATE tours SET handover_checklist=? WHERE id=?", (checklist_str, tour_id_ls), commit=True)
+                        
+                        st.success("✅ Đã lưu hồ sơ và checklist thành công! Tour đang chờ quyết toán.")
+                        time.sleep(1); st.rerun()
+                
+                with c_export:
+                    # --- XUẤT FILE TỔNG HỢP (BÀN GIAO + THỰC ĐƠN) ---
+                    buffer_combined = io.BytesIO()
+                    with pd.ExcelWriter(buffer_combined, engine='xlsxwriter') as writer:
+                        workbook = writer.book
+                        # ws = workbook.add_worksheet("ThucDon")
+                        
+                        # Formats
+                        fmt_comp = workbook.add_format({'bold': True, 'font_size': 12, 'font_color': '#1B5E20'})
+                        fmt_info = workbook.add_format({'font_size': 10, 'italic': True})
+                        fmt_title = workbook.add_format({'bold': True, 'font_size': 16, 'align': 'center', 'valign': 'vcenter', 'font_color': '#E65100', 'border': 0})
+                        fmt_header = workbook.add_format({'bold': True, 'bg_color': '#FFF3E0', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True, 'font_color': '#E65100'})
+                        fmt_text = workbook.add_format({'border': 1, 'valign': 'vcenter', 'text_wrap': True})
+                        # ==========================================
+                        # SHEET 1: BÀN GIAO (BAN_GIAO_HDV)
+                        # ==========================================
+                        ws_bg = workbook.add_worksheet("BAN_GIAO_HDV")
+                        
+                        # --- FORMATS (BÀN GIAO) ---
+                        fmt_title_bg = workbook.add_format({'bold': True, 'font_size': 16, 'align': 'center', 'valign': 'vcenter', 'font_color': '#0D47A1', 'border': 0})
+                        fmt_comp_bg = workbook.add_format({'bold': True, 'font_size': 11, 'font_color': '#1B5E20'})
+                        fmt_header_bg = workbook.add_format({'bold': True, 'bg_color': '#E0F7FA', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True})
+                        fmt_label_bg = workbook.add_format({'bold': True, 'bg_color': '#F5F5F5', 'border': 1, 'align': 'left', 'valign': 'vcenter'})
+                        fmt_text_bg = workbook.add_format({'border': 1, 'valign': 'vcenter', 'text_wrap': True})
+                        fmt_center_bg = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True})
+                        fmt_section_bg = workbook.add_format({'bold': True, 'bg_color': '#FFF3E0', 'border': 1, 'font_color': '#E65100', 'align': 'left', 'valign': 'vcenter'})
+                        money_fmt_bg = workbook.add_format({'border': 1, 'valign': 'vcenter', 'num_format': '#,##0'})
+
+                        # Helper to safely parse float from potential strings
+                        def safe_float_exp(x):
+                            if isinstance(x, (int, float)): return float(x)
+                            try: return float(str(x).replace('.', '').replace(',', '').replace(' VND', '').strip())
+                            except: return 0.0
+
+                        # --- DATA PREP ---
+                        t = dict(tour_info_ls)
+                        
+                        # --- LAYOUT BÀN GIAO ---
+                        ws_bg.merge_range('A1:F1', comp['name'].upper(), fmt_comp_bg)
+                        ws_bg.merge_range('A2:F2', "PHIẾU BÀN GIAO TOUR / TOUR ORDER", fmt_title_bg)
+                        
+                        # SECTION A
+                        row = 3
+                        ws_bg.merge_range(row, 0, row, 5, "A. THÔNG TIN ĐOÀN", fmt_section_bg)
+                        row += 1
+                        ws_bg.write(row, 0, "Tên đoàn:", fmt_label_bg)
+                        ws_bg.merge_range(row, 1, row, 2, t.get('tour_name', ''), fmt_text_bg)
+                        ws_bg.write(row, 3, "Mã Tour:", fmt_label_bg)
+                        ws_bg.merge_range(row, 4, row, 5, t.get('tour_code', ''), fmt_center_bg)
+                        
+                        row += 1
+                        ws_bg.write(row, 0, "Số lượng:", fmt_label_bg)
+                        ws_bg.merge_range(row, 1, row, 2, f"{t.get('guest_count', 0)} khách", fmt_text_bg)
+                        ws_bg.write(row, 3, "Thời gian:", fmt_label_bg)
+                        ws_bg.merge_range(row, 4, row, 5, f"{t.get('start_date','')} - {t.get('end_date','')}", fmt_center_bg)
+                        
+                        row += 1
+                        ws_bg.write(row, 0, "Điểm đón:", fmt_label_bg)
+                        ws_bg.write(row, 1, t.get('pickup_location', ''), fmt_text_bg)
+                        ws_bg.write(row, 2, "Giờ đón:", fmt_label_bg)
+                        ws_bg.write(row, 3, t.get('pickup_time', ''), fmt_text_bg)
+                        ws_bg.write(row, 4, "Chuyến bay:", fmt_label_bg)
+                        ws_bg.write(row, 5, t.get('flight_code', ''), fmt_text_bg)
+
+                        # SECTION B: LỊCH TRÌNH (DỜI TỪ D LÊN B VÀ CHIA THEO NGÀY)
+                        row += 2
+                        ws_bg.merge_range(row, 0, row, 5, "B. LỊCH TRÌNH CHI TIẾT", fmt_section_bg)
+                        row += 1
+                            
+                        # Lấy dữ liệu lịch trình từ DB
+                        itins_xls = run_query("SELECT * FROM tour_itineraries WHERE tour_id=? ORDER BY day_index", (tour_id_ls,))
+                        itin_map_xls = {r['day_index']: r['content'] for r in itins_xls} if itins_xls else {}
+
+                        # Tự động tạo dòng theo ngày
+                        try:
+                            s_date = datetime.strptime(t.get('start_date', ''), '%d/%m/%Y')
+                            e_date = datetime.strptime(t.get('end_date', ''), '%d/%m/%Y')
+                            delta = (e_date - s_date).days + 1
+                            
+                            if delta > 0:
+                                for i in range(delta):
+                                    curr_date = s_date + pd.Timedelta(days=i)
+                                    date_str = curr_date.strftime('%d/%m')
+                                    content_str = itin_map_xls.get(i, "")
+                                    ws_bg.write(row, 0, f"Ngày {i+1} ({date_str})", fmt_label_bg)
+                                    ws_bg.merge_range(row, 1, row, 5, content_str, fmt_text_bg)
+                                    row += 1
+                        except:
+                            pass
+
+                        # SECTION C: NHÂN SỰ (DỜI TỪ B XUỐNG C)
+                        row += 1
+                        ws_bg.merge_range(row, 0, row, 5, "C. THÔNG TIN NHÂN SỰ & VẬN CHUYỂN", fmt_section_bg)
+                        row += 1
+                        headers_b = ["Vai trò", "Họ và tên", "Điện thoại", "Ghi chú / Biển số", "", ""]
+                        for i, h in enumerate(headers_b): 
+                            if h: ws_bg.write(row, i, h, fmt_header_bg)
+                        
+                        row += 1
+                        ws_bg.write(row, 0, "Hướng dẫn viên", fmt_center_bg)
+                        ws_bg.write(row, 1, t.get('guide_name', ''), fmt_text_bg)
+                        ws_bg.write(row, 2, t.get('guide_phone', ''), fmt_center_bg)
+                        ws_bg.write(row, 3, "", fmt_text_bg)
+                        
+                        row += 1
+                        ws_bg.write(row, 0, "Lái xe", fmt_center_bg)
+                        ws_bg.write(row, 1, t.get('driver_name', ''), fmt_text_bg)
+                        ws_bg.write(row, 2, t.get('driver_phone', ''), fmt_center_bg)
+                        ws_bg.write(row, 3, f"{t.get('car_plate', '')} ({t.get('car_type', '')})", fmt_text_bg)
+                        
+                        row += 1
+                        ws_bg.write(row, 0, "Điều hành/Sale", fmt_center_bg)
+                        ws_bg.write(row, 1, t.get('sale_name', ''), fmt_text_bg)
+                        ws_bg.write(row, 2, "", fmt_center_bg)
+                        ws_bg.write(row, 3, "", fmt_text_bg)
+
+                        # SECTION C
+                        row += 2
+                        ws_bg.merge_range(row, 0, row, 5, "C. CHI TIẾT DỊCH VỤ", fmt_section_bg)
+                        
+                        # 1. Khách sạn
+                        row += 1
+                        ws_bg.merge_range(row, 0, row, 5, "1. Lưu trú (Khách sạn)", fmt_label_bg)
+                        row += 1
+                        ws_bg.write(row, 0, "Tên KS", fmt_header_bg)
+                        ws_bg.write(row, 1, "Liên hệ", fmt_header_bg)
+                        ws_bg.write(row, 2, "Phòng/Loại", fmt_header_bg)
+                        ws_bg.write(row, 3, "Tổng tiền", fmt_header_bg)
+                        ws_bg.write(row, 4, "Đã cọc", fmt_header_bg)
+                        ws_bg.write(row, 5, "Còn lại", fmt_header_bg)
+                        
+                        df_hotels_exp = st.session_state.ls_hotels_temp
+                        if not df_hotels_exp.empty:
+                            for _, h in df_hotels_exp.iterrows():
+                                total = safe_float_exp(h.get('total_amount', 0))
+                                dep = safe_float_exp(h.get('deposit', 0))
+                                rem = total - dep
+                                row += 1
+                                ws_bg.write(row, 0, h['hotel_name'], fmt_text_bg)
+                                ws_bg.write(row, 1, f"{h['address']}\n{h['phone']}", fmt_text_bg)
+                                ws_bg.write(row, 2, f"{h['total_rooms']} ({h['room_type']})", fmt_center_bg)
+                                ws_bg.write(row, 3, total, money_fmt_bg)
+                                ws_bg.write(row, 4, dep, money_fmt_bg)
+                                ws_bg.write(row, 5, rem, money_fmt_bg)
+                        else:
+                            row += 1; ws_bg.merge_range(row, 0, row, 5, "(Chưa có thông tin)", fmt_center_bg)
+
+                        # 2. Nhà hàng
+                        row += 1
+                        ws_bg.merge_range(row, 0, row, 5, "2. Ẩm thực (Nhà hàng)", fmt_label_bg)
+                        row += 1
+                        ws_bg.write(row, 0, "Bữa ăn", fmt_header_bg)
+                        ws_bg.write(row, 1, "Nhà hàng", fmt_header_bg)
+                        ws_bg.write(row, 2, "Liên hệ", fmt_header_bg)
+                        ws_bg.write(row, 3, "Tổng tiền", fmt_header_bg)
+                        ws_bg.write(row, 4, "Đã cọc", fmt_header_bg)
+                        ws_bg.write(row, 5, "Còn lại", fmt_header_bg)
+                        
+                        df_rests_exp = st.session_state.ls_rests_temp
+                        if not df_rests_exp.empty:
+                            for _, r in df_rests_exp.iterrows():
+                                total = safe_float_exp(r.get('total_amount', 0))
+                                dep = safe_float_exp(r.get('deposit', 0))
+                                rem = total - dep
+                                row += 1
+                                ws_bg.write(row, 0, r['meal_name'], fmt_text_bg)
+                                ws_bg.write(row, 1, r['restaurant_name'], fmt_text_bg)
+                                ws_bg.write(row, 2, f"{r['address']}\n{r['phone']}", fmt_text_bg)
+                                ws_bg.write(row, 3, total, money_fmt_bg)
+                                ws_bg.write(row, 4, dep, money_fmt_bg)
+                                ws_bg.write(row, 5, rem, money_fmt_bg)
+                        else:
+                            row += 1; ws_bg.merge_range(row, 0, row, 5, "(Chưa có thông tin)", fmt_center_bg)
+
+                        # 3. Điểm tham quan
+                        row += 1
+                        ws_bg.merge_range(row, 0, row, 5, "3. Điểm tham quan", fmt_label_bg)
+                        row += 1
+                        ws_bg.write(row, 0, "Tên địa điểm", fmt_header_bg)
+                        ws_bg.merge_range(row, 1, row, 2, "Địa chỉ", fmt_header_bg)
+                        ws_bg.write(row, 3, "Số lượng", fmt_header_bg)
+                        ws_bg.merge_range(row, 4, row, 5, "Lưu ý", fmt_header_bg)
+                        
+                        df_sightseeings_exp = st.session_state.ls_sight_temp
+                        if not df_sightseeings_exp.empty:
+                            for _, s in df_sightseeings_exp.iterrows():
+                                row += 1
+                                ws_bg.write(row, 0, s['name'], fmt_text_bg)
+                                ws_bg.merge_range(row, 1, row, 2, s['address'], fmt_text_bg)
+                                ws_bg.write(row, 3, s['quantity'], fmt_center_bg)
+                                ws_bg.merge_range(row, 4, row, 5, s['note'], fmt_text_bg)
+                        else:
+                            row += 1; ws_bg.merge_range(row, 0, row, 5, "(Chưa có thông tin)", fmt_center_bg)
+
+                        # 4. Chi phí phát sinh (MỚI)
+                        row += 1
+                        ws_bg.merge_range(row, 0, row, 5, "4. Chi phí phát sinh (Nước, Sim, Banner...)", fmt_label_bg)
+                        row += 1
+                        ws_bg.write(row, 0, "Tên chi phí", fmt_header_bg)
+                        ws_bg.write(row, 1, "ĐVT", fmt_header_bg)
+                        ws_bg.write(row, 2, "Số lượng", fmt_header_bg)
+                        ws_bg.write(row, 3, "Tổng tiền", fmt_header_bg)
+                        ws_bg.write(row, 4, "Đã cọc", fmt_header_bg)
+                        ws_bg.write(row, 5, "Còn lại", fmt_header_bg)
+                        
+                        df_inc_exp = st.session_state.ls_incurred_temp
+                        if not df_inc_exp.empty:
+                            for _, inc in df_inc_exp.iterrows():
+                                try:
+                                    qty = safe_float_exp(inc.get('quantity', 0))
+                                    price = safe_float_exp(inc.get('price', 0))
+                                    total = qty * price
+                                    dep = safe_float_exp(inc.get('deposit', 0))
+                                    rem = total - dep
+                                except: total=0; dep=0; rem=0; qty=0
+
+                                row += 1
+                                ws_bg.write(row, 0, inc['name'], fmt_text_bg)
+                                ws_bg.write(row, 1, inc['unit'], fmt_center_bg)
+                                ws_bg.write(row, 2, qty, fmt_center_bg)
+                                ws_bg.write(row, 3, total, money_fmt_bg)
+                                ws_bg.write(row, 4, dep, money_fmt_bg)
+                                ws_bg.write(row, 5, rem, money_fmt_bg)
+                        else:
+                            row += 1; ws_bg.merge_range(row, 0, row, 5, "(Không có)", fmt_center_bg)
+
+                        # --- [FIX] TÍNH TOÁN TỔNG KẾT (Làm sạch dữ liệu trước khi tính) ---
+                        def get_clean_sum(df, col_name):
+                            if df.empty or col_name not in df.columns: return 0.0
+                            def clean_val(x):
+                                if isinstance(x, (int, float)): return float(x)
+                                try: return float(str(x).replace('.', '').replace(' VND', '').strip())
+                                except: return 0.0
+                            return df[col_name].apply(clean_val).sum()
+
+                        # 1. Tính Tổng chi phí (Total Amount)
+                        t_h = get_clean_sum(st.session_state.ls_hotels_temp, 'total_amount')
+                        t_r = get_clean_sum(st.session_state.ls_rests_temp, 'total_amount')
+                        t_s = get_clean_sum(st.session_state.ls_sight_temp, 'total_amount')
+                        
+                        # Tính riêng cho Incurred (vì cần nhân quantity * price)
+                        df_inc_calc = st.session_state.ls_incurred_temp.copy()
+                        df_inc_calc['price'] = pd.to_numeric(df_inc_calc['price'], errors='coerce').fillna(0)
+                        df_inc_calc['quantity'] = pd.to_numeric(df_inc_calc['quantity'], errors='coerce').fillna(0)
+                        t_i = (df_inc_calc['price'] * df_inc_calc['quantity']).sum()
+
+                        grand_total = t_h + t_r + t_s + t_i
+
+                        # 2. Tính Đã cọc (Deposit)
+                        d_h = get_clean_sum(st.session_state.ls_hotels_temp, 'deposit')
+                        d_r = get_clean_sum(st.session_state.ls_rests_temp, 'deposit')
+                        d_s = get_clean_sum(st.session_state.ls_sight_temp, 'deposit')
+                        d_i = get_clean_sum(st.session_state.ls_incurred_temp, 'deposit')
+                        
+                        grand_deposit = d_h + d_r + d_s + d_i
+
+                        # 3. Còn lại (HDV cần thanh toán cho NCC)
+                        grand_remaining = grand_total - grand_deposit
+                        
+                        # 4. Quyết toán (Còn lại - Tạm ứng)
+                        # tam_ung đã được tính ở UI và truyền vào đây
+                        balance = grand_remaining - tam_ung
+
+                        # SECTION D: TỔNG KẾT & TẠM ỨNG
+                        row += 2
+                        ws_bg.merge_range(row, 0, row, 5, "D. TỔNG KẾT KINH PHÍ", fmt_section_bg)
+                        
+                        # 1. Tổng chi phí
+                        row += 1
+                        ws_bg.merge_range(row, 0, row, 3, "1. TỔNG CHI PHÍ TOUR:", fmt_label_bg)
+                        ws_bg.merge_range(row, 4, row, 5, grand_total, money_fmt_bg)
+                        
+                        # 2. Đã cọc (Phân rã)
+                        row += 1
+                        ws_bg.merge_range(row, 0, row, 3, "2. ĐÃ CỌC / THANH TOÁN TRƯỚC (CÔNG TY):", fmt_label_bg)
+                        ws_bg.merge_range(row, 4, row, 5, grand_deposit, money_fmt_bg)
+                        
+                        # 3. Còn lại
+                        row += 1
+                        ws_bg.merge_range(row, 0, row, 3, "3. CÒN LẠI CẦN THANH TOÁN (HDV CHI):", fmt_label_bg)
+                        ws_bg.merge_range(row, 4, row, 5, grand_remaining, workbook.add_format({'bold': True, 'border': 1, 'valign': 'vcenter', 'num_format': '#,##0', 'bg_color': '#FFF9C4'}))
+
+                        # [FIX] Chi tiết còn lại (Thay vì chi tiết cọc)
+                        r_h = t_h - d_h
+                        r_r = t_r - d_r
+                        r_s = t_s - d_s
+                        r_i = t_i - d_i
+
+                        row += 1
+                        ws_bg.write(row, 0, "   - Khách sạn:", fmt_text_bg)
+                        ws_bg.merge_range(row, 1, row, 3, r_h, money_fmt_bg)
+                        row += 1
+                        ws_bg.write(row, 0, "   - Nhà hàng:", fmt_text_bg)
+                        ws_bg.merge_range(row, 1, row, 3, r_r, money_fmt_bg)
+                        row += 1
+                        ws_bg.write(row, 0, "   - Tham quan:", fmt_text_bg)
+                        ws_bg.merge_range(row, 1, row, 3, r_s, money_fmt_bg)
+                        row += 1
+                        ws_bg.write(row, 0, "   - Phát sinh:", fmt_text_bg)
+                        ws_bg.merge_range(row, 1, row, 3, r_i, money_fmt_bg)
+
+                        # 4. Tạm ứng cho HDV
+                        row += 1
+                        ws_bg.merge_range(row, 0, row, 3, "4. TẠM ỨNG CHO HDV:", fmt_label_bg)
+                        ws_bg.merge_range(row, 4, row, 5, tam_ung, money_fmt_bg)
+
+                        # 5. Quyết toán
+                        row += 1
+                        ws_bg.merge_range(row, 0, row, 3, "5. QUYẾT TOÁN (THU LẠI / CHI THÊM):", fmt_label_bg)
+                        ws_bg.merge_range(row, 4, row, 5, balance, workbook.add_format({'bold': True, 'border': 1, 'valign': 'vcenter', 'num_format': '#,##0', 'font_color': '#D32F2F', 'font_size': 11}))
+
+                        # FOOTER: CHỮ KÝ
+                        row += 3
+                        fmt_sig_title = workbook.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter'})
+                        fmt_sig_name = workbook.add_format({'italic': True, 'align': 'center', 'valign': 'vcenter'})
+                        
+                        ws_bg.write(row, 0, "NGƯỜI LẬP PHIẾU", fmt_sig_title)
+                        ws_bg.merge_range(row, 1, row, 2, "KẾ TOÁN", fmt_sig_title)
+                        ws_bg.write(row, 3, "GIÁM ĐỐC", fmt_sig_title)
+                        ws_bg.merge_range(row, 4, row, 5, "HƯỚNG DẪN VIÊN", fmt_sig_title)
+                        
+                        row += 1
+                        ws_bg.write(row, 0, "(Ký, họ tên)", fmt_sig_name)
+                        ws_bg.merge_range(row, 1, row, 2, "(Ký, họ tên)", fmt_sig_name)
+                        ws_bg.write(row, 3, "(Ký, họ tên)", fmt_sig_name)
+                        ws_bg.merge_range(row, 4, row, 5, "(Ký, họ tên)", fmt_sig_name)
+                        
+                        # Space for signature
+                        row += 5
+                        
+                        # Names
+                        ws_bg.write(row, 0, t.get('sale_name', ''), fmt_sig_title)
+                        ws_bg.merge_range(row, 4, row, 5, t.get('guide_name', ''), fmt_sig_title)
+
+                        ws_bg.set_column('A:A', 20)
+                        ws_bg.set_column('B:F', 18)
+
+                        # ==========================================
+                        # SHEET: DANH SÁCH ĐOÀN (DanhSachDoan)
+                        # ==========================================
+                        ws_ds = workbook.add_worksheet("DanhSachDoan")
+                        
+                        # 1. Company Info
+                        ws_ds.merge_range('A1:F1', comp['name'].upper(), fmt_comp_bg)
+                        ws_ds.merge_range('A2:F2', "DANH SÁCH ĐOÀN / GUEST LIST", fmt_title_bg)
+                        
+                        # 2. Tour Info
+                        ws_ds.write('A4', "Tên đoàn:", fmt_label_bg)
+                        ws_ds.merge_range('B4:C4', t.get('tour_name', ''), fmt_text_bg)
+                        ws_ds.write('D4', "Mã Tour:", fmt_label_bg)
+                        ws_ds.merge_range('E4:F4', t.get('tour_code', ''), fmt_center_bg)
+                        
+                        ws_ds.write('A5', "Thời gian:", fmt_label_bg)
+                        ws_ds.merge_range('B5:C5', f"{t.get('start_date','')} - {t.get('end_date','')}", fmt_center_bg)
+                        ws_ds.write('D5', "Số khách:", fmt_label_bg)
+                        ws_ds.merge_range('E5:F5', f"{t.get('guest_count', 0)} khách", fmt_center_bg)
+
+                        # 3. Table Header
+                        row_ds = 7
+                        headers_ds = ["STT", "Họ và tên", "Ngày sinh", "Quê quán", "Số CCCD", "Phân loại"]
+                        for i, h in enumerate(headers_ds):
+                            ws_ds.write(row_ds, i, h, fmt_header_bg)
+                        
+                        # 4. Data
+                        if not edited_guests.empty:
+                            for i, (idx, row_g) in enumerate(edited_guests.iterrows()):
+                                row_ds += 1
+                                ws_ds.write(row_ds, 0, i + 1, fmt_center_bg)
+                                ws_ds.write(row_ds, 1, row_g.get('name', ''), fmt_text_bg)
+                                ws_ds.write(row_ds, 2, row_g.get('dob', ''), fmt_center_bg)
+                                ws_ds.write(row_ds, 3, row_g.get('hometown', ''), fmt_text_bg)
+                                ws_ds.write(row_ds, 4, row_g.get('cccd', ''), fmt_center_bg)
+                                ws_ds.write(row_ds, 5, row_g.get('type', ''), fmt_center_bg)
+                        
+                        # Column Widths
+                        ws_ds.set_column('A:A', 5)
+                        ws_ds.set_column('B:B', 25)
+                        ws_ds.set_column('C:C', 15)
+                        ws_ds.set_column('D:D', 20)
+                        ws_ds.set_column('E:F', 15)
+
+                        # ==========================================
+                        # SHEET 2: THỰC ĐƠN (ThucDon)
+                        # ==========================================
+                        ws_menu = workbook.add_worksheet("ThucDon")
+                        
+                        # Formats (Menu)
+                        fmt_comp_menu = workbook.add_format({'bold': True, 'font_size': 12, 'font_color': '#1B5E20'})
+                        fmt_info_menu = workbook.add_format({'font_size': 10, 'italic': True})
+                        fmt_title_menu = workbook.add_format({'bold': True, 'font_size': 16, 'align': 'center', 'valign': 'vcenter', 'font_color': '#E65100', 'border': 0})
+                        fmt_header_menu = workbook.add_format({'bold': True, 'bg_color': '#FFF3E0', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True, 'font_color': '#E65100'})
+                        fmt_text_menu = workbook.add_format({'border': 1, 'valign': 'vcenter', 'text_wrap': True})
+                        
+                        # Company Info
+                        comp_data = get_company_data()
+                        ws_menu.write('A1', comp_data['name'], fmt_comp_menu)
+                        ws_menu.write('A2', f"ĐC: {comp_data['address']}", fmt_info_menu)
+                        ws_menu.write('A3', f"SĐT: {comp_data['phone']}", fmt_info_menu)
+                        
+                        # Title
+                        ws_menu.merge_range('A5:C5', f"DANH SÁCH THỰC ĐƠN TOUR: {tour_info_ls['tour_name']}", fmt_title_menu)
+                        
+                        # Table Header
+                        headers_menu = ["Thông tin nhà hàng", "Bữa ăn / Thời gian", "Thực đơn"]
+                        for i, h in enumerate(headers_menu):
+                            ws_menu.write(6, i, h, fmt_header_menu)
+                            
+                        # Data
+                        row_menu = 7
+                        if not df_rests.empty:
+                            df_rests_exp = df_rests.fillna('')
+                            for _, r in df_rests_exp.iterrows():
+                                # Gộp thông tin: Tên, Địa chỉ, Liên hệ
+                                info_parts = [str(r[k]) for k in ['restaurant_name', 'address', 'phone'] if str(r[k]).strip()]
+                                info_str = "\n".join(info_parts)
+                                
+                                ws_menu.write(row_menu, 0, info_str, fmt_text_menu)
+                                ws_menu.write(row_menu, 1, r['meal_name'], fmt_text_menu)
+                                ws_menu.write(row_menu, 2, r['menu'], fmt_text_menu)
+                                row_menu += 1
+                        
+                        # Column widths
+                        ws_menu.set_column('A:A', 40) # Thông tin nhà hàng
+                        ws_menu.set_column('B:B', 25) # Bữa ăn / Thời gian
+                        ws_menu.set_column('C:C', 50) # Thực đơn
+
+                    st.download_button("📥 Xuất Hồ Sơ Bàn Giao & Thực Đơn (Excel)", buffer_combined.getvalue(), f"HoSo_BanGiao_{tour_info_ls['tour_code']}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
     # ---------------- TAB 2: QUYẾT TOÁN ----------------
     with tab_act:
