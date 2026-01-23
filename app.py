@@ -402,6 +402,12 @@ def migrate_db_columns():
     except: pass
     try: c.execute("ALTER TABLE service_bookings ADD COLUMN sale_name TEXT")
     except: pass
+    try: c.execute("ALTER TABLE service_bookings ADD COLUMN hotel_code TEXT")
+    except: pass
+    try: c.execute("ALTER TABLE service_bookings ADD COLUMN room_type TEXT")
+    except: pass
+    try: c.execute("ALTER TABLE service_bookings ADD COLUMN guest_list TEXT")
+    except: pass
 
     # --- Bảng Khách Hàng (Mới) ---
     try: c.execute('''CREATE TABLE IF NOT EXISTS customers (
@@ -1640,12 +1646,31 @@ def create_voucher_pdf(voucher_data):
     buffer.seek(0)
     return buffer
 
-def create_booking_cfm_pdf(booking_info, company_info):
+def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
     """Tạo file PDF Booking Confirmation (CFM)"""
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
     
+    # --- HELPER: WATERMARK & NEW PAGE ---
+    def draw_watermark():
+        if company_info['logo_b64_str']:
+            try:
+                c.saveState()
+                logo_data = base64.b64decode(company_info['logo_b64_str'])
+                image_stream = io.BytesIO(logo_data)
+                img_reader = ImageReader(image_stream)
+                iw, ih = img_reader.getSize()
+                aspect = iw / float(ih)
+                wm_width = 400
+                wm_height = wm_width / aspect
+                c.setFillAlpha(0.08) # Độ mờ 8%
+                c.drawImage(img_reader, (width - wm_width)/2, (height - wm_height)/2, width=wm_width, height=wm_height, mask='auto')
+                c.restoreState()
+            except: pass
+
+    draw_watermark()
+
     # --- CẤU HÌNH FONT (Tương tự create_voucher_pdf) ---
     font_name = 'Helvetica'
     font_bold = 'Helvetica-Bold'
@@ -1671,6 +1696,53 @@ def create_booking_cfm_pdf(booking_info, company_info):
     text_color = "#212121"
     line_color = "#BDBDBD"
 
+    # --- TỪ ĐIỂN NGÔN NGỮ ---
+    labels = {
+        'en': {
+            'add': 'Add:', 'tax': 'Tax Code:',
+            'title': 'BOOKING CONFIRMATION',
+            'greeting': f"A warm greeting from {company_info['name']}!",
+            'gen_info': 'I. GENERAL INFORMATION',
+            'attn': 'Attention to:', 'bk_code': 'Booking Code:', 'svc_date': 'Service Date:',
+            'date_created': 'Date Created:', 'checkout': 'Check-out:', 'created_by': 'Created By:',
+            'status': 'Status:', 'hotel_code': 'Hotel Code:',
+            'confirmed': 'Confirmed', 'cancelled': 'Cancelled',
+            'svc_details': 'II. SERVICE DETAILS',
+            'svc_details_cont': 'II. SERVICE DETAILS (Cont.)',
+            'tbl_name': 'SERVICE NAME', 'tbl_det': 'DETAILS / ROOM INFO', 'tbl_note': 'NOTE',
+            'guest_list': 'III. GUEST LIST',
+            'guest_list_cont': 'III. GUEST LIST (Cont.)',
+            'included': 'INCLUDED SERVICES',
+            'inc_1': '- Tax and Service charges.',
+            'inc_2': '- 24/7 Support from our team.',
+            'confirmed_by': 'CONFIRMED BY',
+            'signed': '[SIGNED]',
+            'page': 'Page'
+        },
+        'vi': {
+            'add': 'ĐC:', 'tax': 'MST:',
+            'title': 'XÁC NHẬN ĐẶT DỊCH VỤ',
+            'greeting': f"Lời chào trân trọng từ {company_info['name']}!",
+            'gen_info': 'I. THÔNG TIN CHUNG',
+            'attn': 'Kính gửi:', 'bk_code': 'Mã đặt chỗ:', 'svc_date': 'Ngày sử dụng:',
+            'date_created': 'Ngày tạo:', 'checkout': 'Ngày trả phòng:', 'created_by': 'Người tạo:',
+            'status': 'Trạng thái:', 'hotel_code': 'Mã khách sạn:',
+            'confirmed': 'Đã xác nhận', 'cancelled': 'Đã hủy',
+            'svc_details': 'II. CHI TIẾT DỊCH VỤ',
+            'svc_details_cont': 'II. CHI TIẾT DỊCH VỤ (Tiếp)',
+            'tbl_name': 'TÊN DỊCH VỤ', 'tbl_det': 'CHI TIẾT / THÔNG TIN PHÒNG', 'tbl_note': 'GHI CHÚ',
+            'guest_list': 'III. DANH SÁCH KHÁCH',
+            'guest_list_cont': 'III. DANH SÁCH KHÁCH (Tiếp)',
+            'included': 'DỊCH VỤ BAO GỒM',
+            'inc_1': '- Thuế và phí phục vụ.',
+            'inc_2': '- Hỗ trợ 24/7 từ đội ngũ của chúng tôi.',
+            'confirmed_by': 'XÁC NHẬN BỞI',
+            'signed': '[ĐÃ KÝ]',
+            'page': 'Trang'
+        }
+    }
+    txt = labels[lang]
+
     # --- HEADER ---
     y = height - 50
     # Logo
@@ -1681,22 +1753,27 @@ def create_booking_cfm_pdf(booking_info, company_info):
             img_reader = ImageReader(image_stream)
             iw, ih = img_reader.getSize()
             aspect = iw / float(ih)
-            logo_h = 60
+            logo_h = 85 # Logo to hơn
             logo_w = logo_h * aspect
             c.drawImage(img_reader, 40, y - logo_h, width=logo_w, height=logo_h, mask='auto')
         except: pass
 
+    # Xử lý địa chỉ (Dịch sơ bộ nếu là tiếng Anh)
+    comp_addr = company_info['address']
+    if lang == 'en':
+        comp_addr = comp_addr.replace("Quận", "Dist.").replace("Huyện", "Dist.").replace("Phường", "Ward").replace("Thành phố", "City").replace("Tỉnh", "Prov.").replace("Đường", "St.")
+
     # Thông tin công ty (Căn phải)
     c.setFillColor(HexColor(primary_color))
-    c.setFont(font_bold, 16)
-    c.drawRightString(width - 40, y - 15, company_info['name'].upper())
+    c.setFont(font_bold, 18)
+    c.drawRightString(width - 40, y - 25, company_info['name'].upper())
     
     c.setFillColor(HexColor(text_color))
     c.setFont(font_name, 10)
-    c.drawRightString(width - 40, y - 30, f"Add: {company_info['address']}")
-    c.drawRightString(width - 40, y - 45, f"Hotline: {company_info['phone']}")
+    c.drawRightString(width - 40, y - 45, f"{txt['add']} {comp_addr}")
+    c.drawRightString(width - 40, y - 60, f"{txt['tax']} {company_info['phone']}")
     
-    y -= 80
+    y -= 100
     c.setStrokeColor(HexColor(primary_color))
     c.setLineWidth(2)
     c.line(40, y, width - 40, y)
@@ -1705,12 +1782,12 @@ def create_booking_cfm_pdf(booking_info, company_info):
     y -= 40
     c.setFillColor(HexColor(primary_color))
     c.setFont(font_bold, 20)
-    c.drawCentredString(width/2, y, "BOOKING CONFIRMATION")
+    c.drawCentredString(width/2, y, txt['title'])
     
     y -= 25
     c.setFillColor(HexColor(text_color))
     c.setFont(font_name, 11)
-    c.drawCentredString(width/2, y, f"A warm greeting from {company_info['name']}!")
+    c.drawCentredString(width/2, y, txt['greeting'])
     
     # --- XỬ LÝ DỮ LIỆU BOOKING ---
     # Parse Customer Info
@@ -1727,47 +1804,71 @@ def create_booking_cfm_pdf(booking_info, company_info):
     y -= 40
     c.setFillColor(HexColor(primary_color))
     c.setFont(font_bold, 12)
-    c.drawString(40, y, "I. GENERAL INFORMATION")
+    c.drawString(40, y, txt['gen_info'])
     y -= 20
     
+    # Tính toán chiều cao khung thông tin
+    info_lines = 4
+    if booking_info.get('type') == 'HOTEL' and booking_info.get('hotel_code'):
+        info_lines = 5
+    box_height = info_lines * 25 + 10
+
     # Vẽ khung thông tin
     c.setStrokeColor(HexColor(line_color))
     c.setLineWidth(1)
-    c.rect(40, y - 70, width - 80, 80, fill=0)
+    c.rect(40, y - box_height, width - 80, box_height, fill=0)
     
     c.setFillColor(HexColor(text_color))
     c.setFont(font_name, 11)
     
-    # Cột 1
-    c.drawString(50, y - 20, "Attention to:")
-    c.setFont(font_bold, 11); c.drawString(130, y - 20, cust_name); c.setFont(font_name, 11)
+    # Dòng 1: Attention to (Riêng 1 dòng)
+    row_y = y - 25
+    c.drawString(50, row_y, txt['attn'])
+    c.setFont(font_bold, 11); c.drawString(130, row_y, cust_name); c.setFont(font_name, 11)
     
-    c.drawString(50, y - 40, "Booking Code:")
-    c.setFont(font_bold, 11); c.drawString(130, y - 40, booking_info['code']); c.setFont(font_name, 11)
+    # Dòng 2
+    row_y -= 25
+    c.drawString(50, row_y, txt['bk_code'])
+    c.setFont(font_bold, 11); c.drawString(130, row_y, booking_info['code']); c.setFont(font_name, 11)
     
-    c.drawString(50, y - 60, "Date Created:")
-    c.drawString(130, y - 60, booking_info.get('created_at', ''))
+    c.drawString(300, row_y, txt['svc_date'])
+    c.drawString(400, row_y, check_in)
     
-    # Cột 2
-    c.drawString(300, y - 20, "Service Date/Check-in:")
-    c.drawString(430, y - 20, check_in)
+    # Dòng 3
+    row_y -= 25
+    c.drawString(50, row_y, txt['date_created'])
+    c.drawString(130, row_y, booking_info.get('created_at', ''))
     
     if check_out != "N/A":
-        c.drawString(300, y - 40, "Check-out:")
-        c.drawString(430, y - 40, check_out)
+        c.drawString(300, row_y, txt['checkout'])
+        c.drawString(400, row_y, check_out)
         
-    c.drawString(300, y - 60, "Status:")
-    status_txt = "Confirmed" if booking_info.get('status') != 'deleted' else "Cancelled"
+    # Dòng 4
+    row_y -= 25
+    c.drawString(50, row_y, txt['created_by'])
+    c.drawString(130, row_y, booking_info.get('sale_name', ''))
+
+    c.drawString(300, row_y, txt['status'])
+    status_txt = txt['confirmed'] if booking_info.get('status') != 'deleted' else txt['cancelled']
     c.setFillColor(HexColor("#2E7D32" if status_txt == "Confirmed" else "#C62828"))
     c.setFont(font_bold, 11)
-    c.drawString(430, y - 60, status_txt)
+    c.drawString(400, row_y, status_txt)
     c.setFillColor(HexColor(text_color))
+    c.setFont(font_name, 11)
+
+    # Dòng 5 (Nếu có Hotel Code)
+    if info_lines == 5:
+        row_y -= 25
+        c.drawString(50, row_y, txt['hotel_code'])
+        c.setFont(font_bold, 11)
+        c.drawString(130, row_y, booking_info.get('hotel_code', ''))
+        c.setFont(font_name, 11)
 
     # --- PHẦN 2: CHI TIẾT DỊCH VỤ ---
-    y -= 110
+    y -= (box_height + 40)
     c.setFillColor(HexColor(primary_color))
     c.setFont(font_bold, 12)
-    c.drawString(40, y, "II. SERVICE DETAILS")
+    c.drawString(40, y, txt['svc_details'])
     y -= 25
     
     # Header Bảng
@@ -1775,9 +1876,9 @@ def create_booking_cfm_pdf(booking_info, company_info):
     c.rect(40, y - 5, width - 80, 20, fill=1, stroke=0) # Header BG
     c.setFillColor(HexColor(primary_color))
     c.setFont(font_bold, 10)
-    c.drawString(50, y, "SERVICE NAME")
-    c.drawString(250, y, "DETAILS / DURATION")
-    c.drawString(450, y, "NOTE")
+    c.drawString(50, y, txt['tbl_name'])
+    c.drawString(250, y, txt['tbl_det'])
+    c.drawString(450, y, txt['tbl_note'])
     
     y -= 20
     c.setFillColor(HexColor(text_color))
@@ -1791,37 +1892,162 @@ def create_booking_cfm_pdf(booking_info, company_info):
         for item in raw_items:
             if item.strip(): items.append((item.strip(), ""))
     else:
-        items.append((booking_info['name'], details))
+        # Translate basic keywords for non-hotel types
+        if lang == 'en':
+            details_display = details.replace("Ngày:", "Date:").replace("SL:", "Qty:").replace("Lưu trú:", "Stay:")
+        else:
+            details_display = details
+        items.append((booking_info['name'], details_display))
         
-    for name, det in items:
+    # [NEW] Xử lý hiển thị chi tiết cho Booking Khách sạn (Hotel Code, Room Type, Guest List)
+    if booking_info.get('type') == 'HOTEL':
+        # Override items list to show detailed info
+        r_type = booking_info.get('room_type', '')
+        g_list = booking_info.get('guest_list', '')
+        
+        # Format lại phần Details
+        # details cũ: "Lưu trú: 01/01 - 03/01 (2 đêm, 1 phòng)"
+        # Regex extract numbers
+        new_details = details
+        if lang == 'en':
+            match = re.search(r'\((\d+)\s+đêm,\s+(\d+)\s+phòng\)', details)
+            if match:
+                nights = match.group(1)
+                rooms = match.group(2)
+                new_details = f"{nights} nights, {rooms} rooms"
+            if r_type: new_details += f"\nRoom Type: {r_type}"
+        else:
+            if r_type: new_details += f"\nLoại phòng: {r_type}"
+        
+        # Format phần Note hoặc thêm vào Details
+        note_part = "" # Guest list moved to separate section
+        
+        items = [(booking_info['name'], new_details, note_part)]
+
+    for item in items:
         # Tự động xuống dòng nếu text quá dài (Logic đơn giản)
+        if len(item) == 3:
+            name, det, note = item
+        else:
+            name, det = item
+            note = ""
+            
+        # Vẽ Name
         c.drawString(50, y, name[:45] + "..." if len(name)>45 else name)
-        c.drawString(250, y, det[:50] + "..." if len(det)>50 else det)
-        c.drawString(450, y, "") # Note để trống hoặc lấy từ đâu đó
+        
+        # Vẽ Details (Multi-line support basic)
+        det_lines = det.split('\n')
+        dy = y
+        for line in det_lines:
+            c.drawString(250, dy, line[:50] + "..." if len(line)>50 else line)
+            dy -= 12
+            
+        # Vẽ Note (Guest List)
+        note_lines = note.split('\n')
+        ny = y
+        for line in note_lines:
+            c.drawString(450, ny, line[:40] + "..." if len(line)>40 else line)
+            ny -= 12
+            
+        # Tính toán y tiếp theo dựa trên số dòng nhiều nhất
+        max_lines = max(len(det_lines), len(note_lines), 1)
+        row_height = max(25, max_lines * 12 + 10)
+        
+        # [NEW] Kiểm tra ngắt trang
+        if y - row_height < 50:
+            c.setFillColor(HexColor(text_color))
+            c.setFont(font_name, 9)
+            c.drawCentredString(width / 2, 15, f"Page {c.getPageNumber()}")
+            c.showPage()
+            y = height - 50
+            draw_watermark()
+            
+            # Vẽ lại Header bảng
+            c.setFillColor(HexColor(primary_color))
+            c.setFont(font_bold, 12)
+            c.drawString(40, y, txt['svc_details_cont'])
+            y -= 25
+            c.setFillColor(HexColor("#E8F5E9"))
+            c.rect(40, y - 5, width - 80, 20, fill=1, stroke=0)
+            c.setFillColor(HexColor(primary_color))
+            c.setFont(font_bold, 10)
+            c.drawString(50, y, txt['tbl_name'])
+            c.drawString(250, y, txt['tbl_det'])
+            c.drawString(450, y, txt['tbl_note'])
+            y -= 20
+            c.setFillColor(HexColor(text_color))
+            c.setFont(font_name, 10)
         
         # Kẻ dòng dưới
         c.setStrokeColor(HexColor("#EEEEEE"))
-        c.line(40, y - 5, width - 40, y - 5)
-        y -= 25
-        
-        if y < 100: # Sang trang mới nếu hết chỗ (Đơn giản hóa: chỉ break, không tạo trang mới trong code này)
-            break
+        line_y = y - row_height + 15
+        c.line(40, line_y, width - 40, line_y)
+        y -= row_height
 
-    # --- PHẦN 3: INCLUDED & FOOTER ---
+    # --- PHẦN 3: GUEST LIST (NẾU CÓ) ---
+    g_list_content = booking_info.get('guest_list', '')
+    next_section_idx = 3
+    
+    if g_list_content:
+        if y < 100:
+            c.setFillColor(HexColor(text_color))
+            c.setFont(font_name, 9)
+            c.drawCentredString(width / 2, 15, f"Page {c.getPageNumber()}")
+            c.showPage()
+            y = height - 50
+            draw_watermark()
+            
+        y -= 20
+        c.setFillColor(HexColor(primary_color))
+        c.setFont(font_bold, 12)
+        c.drawString(40, y, txt['guest_list'])
+        y -= 20
+        c.setFillColor(HexColor(text_color))
+        c.setFont(font_name, 10)
+        
+        for line in g_list_content.split('\n'):
+            if y < 50:
+                c.setFillColor(HexColor(text_color))
+                c.setFont(font_name, 9)
+                c.drawCentredString(width / 2, 15, f"Page {c.getPageNumber()}")
+                c.showPage()
+                y = height - 50
+                draw_watermark()
+                c.setFillColor(HexColor(primary_color))
+                c.setFont(font_bold, 12)
+                c.drawString(40, y, txt['guest_list_cont'])
+                y -= 20
+                c.setFillColor(HexColor(text_color))
+                c.setFont(font_name, 10)
+                
+            c.drawString(50, y, line)
+            y -= 15
+        next_section_idx = 4
+
+    # --- PHẦN 4: INCLUDED & FOOTER ---
+    if y < 150:
+        c.setFillColor(HexColor(text_color))
+        c.setFont(font_name, 9)
+        c.drawCentredString(width / 2, 15, f"Page {c.getPageNumber()}")
+        c.showPage()
+        y = height - 50
+        draw_watermark()
+        
     y -= 20
     c.setFillColor(HexColor(primary_color))
     c.setFont(font_bold, 12)
-    c.drawString(40, y, "III. INCLUDED SERVICES")
+    roman_num = "IV" if next_section_idx == 4 else "III"
+    c.drawString(40, y, f"{roman_num}. {txt['included']}")
     y -= 20
     c.setFillColor(HexColor(text_color))
     c.setFont(font_name, 10)
-    c.drawString(50, y, "- Tax and Service charges.")
-    c.drawString(50, y - 15, "- 24/7 Support from our team.")
+    c.drawString(50, y, txt['inc_1'])
+    c.drawString(50, y - 15, txt['inc_2'])
     
     # Signature
-    y -= 80
+    y -= 45
     c.setFont(font_bold, 11)
-    c.drawCentredString(width - 100, y, "CONFIRMED BY")
+    c.drawCentredString(width - 100, y, txt['confirmed_by'])
     c.setFont(font_name, 10)
     c.drawCentredString(width - 100, y - 15, company_info['name'])
     
@@ -1831,8 +2057,12 @@ def create_booking_cfm_pdf(booking_info, company_info):
     c.saveState()
     c.translate(width - 100, y - 50)
     c.rotate(15)
-    c.drawCentredString(0, 0, "[SIGNED]")
+    c.drawCentredString(0, 0, txt['signed'])
     c.restoreState()
+
+    c.setFillColor(HexColor(text_color))
+    c.setFont(font_name, 9)
+    c.drawCentredString(width / 2, 15, f"{txt['page']} {c.getPageNumber()}")
 
     c.save()
     buffer.seek(0)
@@ -3429,7 +3659,9 @@ def render_booking_management():
                 cust_query = "SELECT * FROM customers WHERE sale_name=? ORDER BY id DESC"
                 cust_params.append(current_user_name)
             customers = run_query(cust_query, tuple(cust_params))
-            cust_opts = ["-- Khách mới --"] + [f"{c['name']} | {c['phone']}" for c in customers] if customers else ["-- Khách mới --"] # type: ignore
+            cust_opts = ["-- Khách mới --"]
+            if customers:
+                cust_opts += [f"{c['name']} | {c['phone']}" for c in customers]
             sel_cust = st.selectbox("🔍 Chọn khách hàng cũ (Gợi ý):", cust_opts, key="bk_cust_suggest")
             
             pre_name, pre_phone = "", ""
@@ -3520,6 +3752,13 @@ def render_booking_management():
                 st.text_input("Sales phụ trách", value=current_user_name, disabled=True)
                 with st.form("bk_hotel", clear_on_submit=True):
                     h_name = st.text_input("Tên Khách sạn", placeholder="VD: Mường Thanh Luxury")
+                    
+                    # [NEW] Thêm các trường thông tin chi tiết
+                    c_h1, c_h2 = st.columns(2)
+                    hotel_code = c_h1.text_input("Mã code khách sạn (Booking ID)", placeholder="VD: 12345678")
+                    room_type = c_h2.text_area("Hạng phòng", placeholder="VD: 2 Deluxe, 1 Suite (Xuống dòng nếu nhiều hạng)", height=68)
+                    guest_list = st.text_area("Danh sách khách lưu trú", placeholder="VD: Nguyen Van A, Tran Thi B...", height=100)
+                    
                     # Dates are already outside
                     
                     c_cust_n, c_cust_p = st.columns(2)
@@ -3541,7 +3780,10 @@ def render_booking_management():
                                 'tax_percent': tax_percent,
                                 'selling_price': total_sell, # Storing TOTAL
                                 'profit': total_profit,
-                                'sale_name': current_user_name
+                                'sale_name': current_user_name,
+                                'hotel_code': hotel_code,
+                                'room_type': room_type,
+                                'guest_list': guest_list
                             })
                             # Clear inputs
                             if "bk_hotel_net_val" in st.session_state: del st.session_state.bk_hotel_net_val
@@ -3786,6 +4028,9 @@ def render_booking_management():
                 st.text_input("Sales phụ trách", value=current_user_name, disabled=True, key="combo_sale")
                 with st.form("bk_combo", clear_on_submit=True):
                     combo_name = st.text_input("Tên Combo / Gói", placeholder="VD: Combo Đà Nẵng 3N2Đ")
+                    # [NEW] Thêm danh sách khách cho Combo
+                    guest_list_cb = st.text_area("Danh sách khách (Đoàn)", placeholder="Nhập danh sách khách hàng...", height=100)
+                    
                     c_cust_n, c_cust_p = st.columns(2)
                     cust_name = c_cust_n.text_input("Tên khách hàng (*)", value=pre_name, placeholder="Nhập tên khách")
                     cust_phone = c_cust_p.text_input("Số điện thoại", value=pre_phone, placeholder="Nhập SĐT (Tùy chọn)")
@@ -3802,7 +4047,8 @@ def render_booking_management():
                                 'net_price': total_net,
                                 'tax_percent': tax_percent,
                                 'selling_price': total_sell, 'profit': profit,
-                                'sale_name': current_user_name
+                                'sale_name': current_user_name,
+                                'guest_list': guest_list_cb
                             })
                             # Clear inputs
                             if "bk_combo_net_val" in st.session_state: del st.session_state.bk_combo_net_val
@@ -3940,9 +4186,13 @@ def render_booking_management():
                 
                 # --- NÚT TẢI BOOKING CONFIRMATION (MỚI) ---
                 st.write("")
+                c_lang, c_dl_btn = st.columns([1, 2])
+                sel_lang = c_lang.radio("Ngôn ngữ PDF:", ["Tiếng Việt", "English"], horizontal=True)
+                lang_code = 'vi' if sel_lang == "Tiếng Việt" else 'en'
+                
                 comp_data_cfm = get_company_data()
-                pdf_cfm = create_booking_cfm_pdf(dict(bk_info), comp_data_cfm)
-                st.download_button(
+                pdf_cfm = create_booking_cfm_pdf(dict(bk_info), comp_data_cfm, lang=lang_code)
+                c_dl_btn.download_button(
                     label="📥 Tải Booking Confirmation (PDF)",
                     data=pdf_cfm,
                     file_name=f"Booking_CFM_{code}.pdf",
