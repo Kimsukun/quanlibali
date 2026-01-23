@@ -21,6 +21,10 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.utils import ImageReader
 from reportlab.lib.colors import HexColor
 from typing import Any, List, Optional, Union, Literal, overload, Dict
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from lunardate import LunarDate
 
 # --- QUAN TRỌNG: CẤU HÌNH TRANG PHẢI Ở ĐẦU TIÊN ---
 st.set_page_config(
@@ -614,6 +618,19 @@ def init_db():
         created_at TEXT
     )''')
 
+    # --- THÊM VÀO TRONG HÀM init_db() ---
+    c.execute('''CREATE TABLE IF NOT EXISTS payment_reminders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ref_code TEXT,       -- Mã Booking/Tour
+        ref_name TEXT,       -- Tên khách/Tour
+        amount REAL,         -- Số tiền cần thu
+        due_date TEXT,       -- Ngày hẹn thông báo lại
+        receiver_email TEXT, -- Email người nhận (Nội bộ hoặc Khách)
+        content TEXT,        -- Nội dung nhắc
+        status TEXT,         -- 'sent_1': Đã gửi lần 1, 'sent_2': Đã gửi lần 2 (hoàn tất)
+        created_at TEXT
+    )''')
+
     c.execute("SELECT * FROM users WHERE username = 'admin'")
     if not c.fetchone():
         admin_pw = hashlib.sha256("admin123".encode()).hexdigest()
@@ -634,13 +651,13 @@ migrate_db_columns()
 
 # --- CÁC HÀM HỖ TRỢ ---
 @overload
-def run_query(query: str, params: Any = ..., fetch_one: Literal[False] = ..., commit: Literal[False] = ...) -> List[sqlite3.Row]: ...
+def run_query(query: str, params: Any = ..., fetch_one: Literal[False] = ..., commit: Literal[False] = ...) -> List[Any]: ...
 
 @overload
-def run_query(query: str, params: Any, fetch_one: Literal[True], commit: Literal[False] = ...) -> Optional[sqlite3.Row]: ...
+def run_query(query: str, params: Any, fetch_one: Literal[True], commit: Literal[False] = ...) -> Any: ...
 
 @overload
-def run_query(query: str, *, fetch_one: Literal[True], commit: Literal[False] = ...) -> Optional[sqlite3.Row]: ...
+def run_query(query: str, *, fetch_one: Literal[True], commit: Literal[False] = ...) -> Any: ...
 
 @overload
 def run_query(query: str, params: Any = ..., fetch_one: Any = ..., *, commit: Literal[True]) -> bool: ...
@@ -724,6 +741,77 @@ def update_company_info(name, address, phone, logo_bytes=None):
         if isinstance(old, sqlite3.Row): b64_str = old['logo_base64'] # type: ignore
     run_query("UPDATE company_info SET name=?, address=?, phone=?, logo_base64=? WHERE id=1", (name, address, phone, b64_str), commit=True)
     get_company_data.clear()# type: ignore
+
+# --- HÀM GỬI EMAIL ---
+def send_email_notification(to_email, subject, body_html):
+    """Hàm gửi email qua SMTP Gmail"""
+    try:
+        # Lấy cấu hình từ secrets.toml
+        email_sender = st.secrets["email"]["sender"]
+        email_password = st.secrets["email"]["password"]
+        
+        msg = MIMEMultipart()
+        msg['From'] = f"Bali Tourist System <{email_sender}>"
+        msg['To'] = to_email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body_html, 'html'))
+
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(email_sender, email_password)
+        server.send_message(msg)
+        server.quit()
+        return True, "Đã gửi mail thành công!"
+    except Exception as e:
+        return False, f"Lỗi gửi mail: {str(e)}"
+
+# --- HÀM TỰ ĐỘNG QUÉT & GỬI LẦN 2 ---
+def check_and_send_due_reminders():
+    """Kiểm tra các lịch hẹn đến ngày hôm nay để gửi email lần 2"""
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    # Tìm các nhắc hẹn có ngày = hôm nay (hoặc quá khứ) VÀ mới chỉ gửi lần 1 ('sent_1')
+    reminders = run_query("SELECT * FROM payment_reminders WHERE status='sent_1' AND due_date <= ?", (today_str,))
+    
+    count = 0
+    if reminders:
+        for r in reminders:
+            # Gửi email lần 2
+            subject = f"🔔 [NHẮC HẸN LẦN 2] Thanh toán cho mã {r['ref_code']}"
+            content = f"""
+            <h3>🔔 NHẮC HẸN THANH TOÁN (LẦN 2)</h3>
+            <p>Hệ thống tự động nhắc bạn về khoản thanh toán đã đến hẹn:</p>
+            <ul>
+                <li><strong>Mã hồ sơ:</strong> {r['ref_code']}</li>
+                <li><strong>Tên:</strong> {r['ref_name']}</li>
+                <li><strong>Số tiền:</strong> {format_vnd(r['amount'])} VND</li>
+                <li><strong>Nội dung:</strong> {r['content']}</li>
+                <li><strong>Ngày hẹn:</strong> {r['due_date']}</li>
+            </ul>
+            <p>Vui lòng kiểm tra và xử lý.</p>
+            """
+            success, msg = send_email_notification(r['receiver_email'], subject, content)
+            if success:
+                # Cập nhật trạng thái thành sent_2 (đã xong)
+                run_query("UPDATE payment_reminders SET status='sent_2' WHERE id=?", (r['id'],), commit=True)
+                count += 1
+    return count
+
+# --- HÀM HỖ TRỢ LỊCH ÂM/DƯƠNG ---
+def convert_solar_to_lunar(solar_date):
+    """Chuyển Dương lịch -> Âm lịch"""
+    try:
+        ld = LunarDate.fromSolarDate(solar_date.year, solar_date.month, solar_date.day)
+        return f"{ld.day:02d}/{ld.month:02d}/{ld.year} (Âm lịch)"
+    except:
+        return "Không xác định"
+
+def convert_lunar_to_solar(day, month, year, is_leap=False):
+    """Chuyển Âm lịch -> Dương lịch"""
+    try:
+        sd = LunarDate(year, month, day, is_leap).toSolarDate()
+        return sd # Trả về object date
+    except ValueError:
+        return None
 
 def get_tour_financials(tour_id, tour_info):
     """
@@ -1759,14 +1847,20 @@ def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
         except: pass
 
     # Xử lý địa chỉ (Dịch sơ bộ nếu là tiếng Anh)
+    # Xử lý địa chỉ và tên công ty (Dịch sơ bộ nếu là tiếng Anh)
     comp_addr = company_info['address']
+    comp_name = company_info['name']
+    
     if lang == 'en':
-        comp_addr = comp_addr.replace("Quận", "Dist.").replace("Huyện", "Dist.").replace("Phường", "Ward").replace("Thành phố", "City").replace("Tỉnh", "Prov.").replace("Đường", "St.")
+        # [UPDATED] Hardcoded English details
+        comp_name = "BALI TOURIST TRAVEL COMPANY LIMITED"
+        comp_addr = "No. 46 Nguyen Oanh, Hanh Thong Ward, Ho Chi Minh City, Vietnam"
+        txt['greeting'] = f"A warm greeting from {comp_name}!"
 
     # Thông tin công ty (Căn phải)
     c.setFillColor(HexColor(primary_color))
     c.setFont(font_bold, 18)
-    c.drawRightString(width - 40, y - 25, company_info['name'].upper())
+    c.drawRightString(width - 40, y - 25, comp_name.upper())
     
     c.setFillColor(HexColor(text_color))
     c.setFont(font_name, 10)
@@ -1886,18 +1980,34 @@ def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
     
     # Nội dung bảng (Xử lý Combo tách dòng)
     items = []
+    
+    # [HELPER] Translate content if English
+    def translate_content(text):
+        if lang != 'en' or not text: return text
+        replacements = {
+            "Ngày:": "Date:", "SL:": "Qty:", "Lưu trú:": "Stay:",
+            "Xe ": "Car ", "Vé:": "Ticket:", "Máy bay": "Flight", 
+            "Tàu hỏa": "Train", "Du thuyền": "Cruise", "Cabin:": "Cabin:",
+            "phòng": "rooms", "đêm": "nights", "khách": "pax",
+            "[KS]": "[Hotel]", "[XE]": "[Car]", "[BAY]": "[Flight]", 
+            "[TAU]": "[Train]", "[THUYEN]": "[Cruise]", "[CB]": "[Combo]"
+        }
+        for k, v in replacements.items():
+            text = text.replace(k, v)
+        return text
+
     if booking_info.get('type') == 'COMBO':
         # Tách các item trong combo (ngăn cách bởi | hoặc dòng mới)
         raw_items = re.split(r'[|\n]', details)
         for item in raw_items:
-            if item.strip(): items.append((item.strip(), ""))
+            if item.strip(): 
+                display_item = translate_content(item.strip())
+                items.append((display_item, ""))
     else:
         # Translate basic keywords for non-hotel types
-        if lang == 'en':
-            details_display = details.replace("Ngày:", "Date:").replace("SL:", "Qty:").replace("Lưu trú:", "Stay:")
-        else:
-            details_display = details
-        items.append((booking_info['name'], details_display))
+        details_display = translate_content(details)
+        name_display = translate_content(booking_info['name'])
+        items.append((name_display, details_display))
         
     # [NEW] Xử lý hiển thị chi tiết cho Booking Khách sạn (Hotel Code, Room Type, Guest List)
     if booking_info.get('type') == 'HOTEL':
@@ -1915,6 +2025,9 @@ def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
                 nights = match.group(1)
                 rooms = match.group(2)
                 new_details = f"{nights} nights, {rooms} rooms"
+            else:
+                new_details = translate_content(details)
+                
             if r_type: new_details += f"\nRoom Type: {r_type}"
         else:
             if r_type: new_details += f"\nLoại phòng: {r_type}"
@@ -1922,14 +2035,15 @@ def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
         # Format phần Note hoặc thêm vào Details
         note_part = "" # Guest list moved to separate section
         
-        items = [(booking_info['name'], new_details, note_part)]
+        name_display = translate_content(booking_info['name'])
+        items = [(name_display, new_details, note_part)]
 
     for item in items:
         # Tự động xuống dòng nếu text quá dài (Logic đơn giản)
         if len(item) == 3:
             name, det, note = item
         else:
-            name, det = item
+            name, det = item # type: ignore
             note = ""
             
         # Vẽ Name
@@ -2044,18 +2158,19 @@ def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
     c.drawString(50, y, txt['inc_1'])
     c.drawString(50, y - 15, txt['inc_2'])
     
+
     # Signature
     y -= 45
     c.setFont(font_bold, 11)
-    c.drawCentredString(width - 100, y, txt['confirmed_by'])
+    c.drawCentredString(width - 120, y, txt['confirmed_by'])
     c.setFont(font_name, 10)
-    c.drawCentredString(width - 100, y - 15, company_info['name'])
+    c.drawCentredString(width - 120, y - 15, comp_name)
     
     # Dấu mộc giả lập (Text)
     c.setFillColor(HexColor("#C62828"))
     c.setFont(font_bold, 14)
     c.saveState()
-    c.translate(width - 100, y - 50)
+    c.translate(width - 120, y - 50)
     c.rotate(15)
     c.drawCentredString(0, 0, txt['signed'])
     c.restoreState()
@@ -2071,6 +2186,153 @@ def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
 # ==========================================
 # 4. GIAO DIỆN & LOGIC MODULES
 # ==========================================
+
+def render_notification_calendar():
+    st.title("📅 Lịch Thông Báo & Nhắc Thanh Toán")
+    
+    # --- TỰ ĐỘNG CHẠY KIỂM TRA GỬI LẦN 2 ---
+    if "auto_check_done" not in st.session_state:
+        sent_count = check_and_send_due_reminders()
+        if sent_count > 0:
+            st.toast(f"🚀 Hệ thống vừa tự động gửi {sent_count} email nhắc hẹn đến hạn!", icon="✅")
+        st.session_state.auto_check_done = True
+
+    # Chia layout
+    col_cal, col_form = st.columns([1, 1.5])
+
+    # --- CỘT TRÁI: DANH SÁCH & CÔNG CỤ LỊCH ---
+    with col_cal:
+        # === 1. CÔNG CỤ CHUYỂN ĐỔI LỊCH (MỚI) ===
+        with st.expander("☯️ Công cụ Chuyển đổi Âm / Dương", expanded=False):
+            st.caption("Tra cứu nhanh ngày Âm/Dương lịch")
+            cv_mode = st.radio("Chế độ:", ["Dương ➡ Âm", "Âm ➡ Dương"], horizontal=True, label_visibility="collapsed")
+            
+            if cv_mode == "Dương ➡ Âm":
+                d_in = st.date_input("Chọn ngày Dương:", datetime.now(), format="DD/MM/YYYY")
+                if d_in:
+                    lunar_txt = convert_solar_to_lunar(d_in)
+                    st.success(f"🗓️ **{lunar_txt}**")
+            else:
+                c_d, c_m, c_y = st.columns(3)
+                l_day = c_d.number_input("Ngày", 1, 30, 1)
+                l_month = c_m.number_input("Tháng", 1, 12, 1)
+                l_year = c_y.number_input("Năm", 2024, 2030, datetime.now().year)
+                is_leap = st.checkbox("Tháng nhuận")
+                
+                if st.button("Tra cứu Dương lịch"):
+                    res_date = convert_lunar_to_solar(l_day, l_month, l_year, is_leap)
+                    if res_date:
+                        st.success(f"☀️ Ngày Dương: **{res_date.strftime('%d/%m/%Y')}**")
+                        weekday_map = {0:"Thứ Hai", 1:"Thứ Ba", 2:"Thứ Tư", 3:"Thứ Năm", 4:"Thứ Sáu", 5:"Thứ Bảy", 6:"Chủ Nhật"}
+                        st.caption(f"({weekday_map[res_date.weekday()]})")
+                    else:
+                        st.error("Ngày âm lịch không hợp lệ!")
+
+        st.divider()
+        
+        # === 2. DANH SÁCH LỊCH HẸN ===
+        st.markdown("### 🗓️ Lịch sắp tới")
+        with st.container(border=True):
+            # Lấy danh sách nhắc hẹn
+            upcoming = run_query("SELECT * FROM payment_reminders WHERE status != 'sent_2' ORDER BY due_date ASC")
+            
+            if upcoming:
+                for item in upcoming:
+                    d_obj = datetime.strptime(item['due_date'], '%Y-%m-%d').date()
+                    days_left = (d_obj - datetime.now().date()).days
+                    
+                    # Format ngày tháng năm
+                    date_display = d_obj.strftime('%d/%m/%Y')
+                    lunar_display = convert_solar_to_lunar(d_obj).replace(" (Âm lịch)", "")
+                    
+                    color = "orange" if days_left == 0 else "green" if days_left > 0 else "red"
+                    icon = "🔔" if days_left == 0 else "📅"
+                    
+                    with st.expander(f"{icon} {date_display} (Âm: {lunar_display}) | {item['ref_code']}"):
+                        st.write(f"**Nội dung:** {item['content']}")
+                        st.write(f"**Người nhận:** {item['receiver_email']}")
+                        st.write(f"**Số tiền:** {format_vnd(item['amount'])} VND")
+                        
+                        status_txt = "Chờ gửi Lần 1" if item['status'] == 'pending' else "Đã gửi Lần 1, chờ Lần 2"
+                        st.caption(f"Trạng thái: {status_txt}")
+                        
+                        if st.button("🗑️ Xóa", key=f"del_cal_{item['id']}"):
+                            run_query("DELETE FROM payment_reminders WHERE id=?", (item['id'],), commit=True)
+                            st.rerun()
+            else:
+                st.info("Không có lịch nhắc nào sắp tới.")
+
+    # --- CỘT PHẢI: FORM TẠO (GIỮ NGUYÊN) ---
+    with col_form:
+        st.markdown("### ✍️ Tạo yêu cầu thanh toán mới")
+        with st.container(border=True):
+            # 1. Lấy dữ liệu Booking/Tour để liên kết
+            tours = run_query("SELECT tour_code, tour_name FROM tours WHERE status='running'")
+            bookings = run_query("SELECT code, name FROM service_bookings WHERE status='active'")
+            
+            opts = ["-- Chọn mã liên kết --"]
+            if tours: opts += [f"TOUR | {t['tour_code']} | {t['tour_name']}" for t in tours]
+            if bookings: opts += [f"BOOK | {b['code']} | {b['name']}" for b in bookings]
+            
+            sel_ref = st.selectbox("Liên kết với Booking/Tour:", opts)
+            
+            # Tự động điền thông tin nếu chọn mã
+            ref_code = ""
+            ref_name = ""
+            if sel_ref != "-- Chọn mã liên kết --":
+                parts = sel_ref.split(" | ")
+                ref_code = parts[1]
+                ref_name = parts[2]
+
+            c1, c2 = st.columns(2)
+            amount = c1.number_input("Số tiền yêu cầu:", min_value=0.0, step=100000.0, format="%.0f")
+            
+            # [CẬP NHẬT] Chọn ngày với format DD/MM/YYYY
+            due_date = c2.date_input("Ngày hẹn nhắc lại (Lần 2):", min_value=datetime.now(), format="DD/MM/YYYY")
+            
+            # Hiển thị ngày Âm lịch tương ứng ngay dưới để tiện theo dõi
+            if due_date:
+                st.caption(f"🗓️ Tương ứng Âm lịch: {convert_solar_to_lunar(due_date)}")
+            
+            # Email mặc định lấy từ secrets
+            def_email = ""
+            try: def_email = st.secrets["email"].get("receiver_default", "")
+            except: pass
+            
+            receiver = st.text_input("Email người nhận thông báo:", value=def_email, help="Email của Kế toán hoặc Khách hàng")
+            content = st.text_area("Nội dung yêu cầu thanh toán:", height=100, placeholder="VD: Yêu cầu thanh toán đợt 1 cho đoàn...")
+
+            st.info("ℹ️ **Cơ chế:** Khi bấm nút dưới, hệ thống sẽ **GỬI NGAY 1 EMAIL** cho người nhận. Đến ngày hẹn ở trên, hệ thống sẽ **GỬI TIẾP 1 EMAIL NỮA**.")
+
+            if st.button("🚀 Lưu & Gửi thông báo ngay", type="primary", use_container_width=True):
+                if ref_code and receiver and content:
+                    with st.spinner("Đang gửi email lần 1..."):
+                        # 1. Gửi Email Lần 1 Ngay lập tức
+                        subj = f"📢 [THÔNG BÁO] Yêu cầu thanh toán - {ref_code}"
+                        html_body = f"""
+                        <h3>📢 YÊU CẦU THANH TOÁN (LẦN 1)</h3>
+                        <p>Kính gửi,</p>
+                        <p>Chúng tôi gửi thông báo thanh toán cho dịch vụ <strong>{ref_name}</strong> (Mã: {ref_code}).</p>
+                        <p><strong>Số tiền:</strong> {format_vnd(amount)} VND</p>
+                        <p><strong>Nội dung:</strong> {content}</p>
+                        <p>Hệ thống sẽ gửi nhắc nhở lại vào ngày: <strong>{due_date.strftime('%d/%m/%Y')}</strong>.</p>
+                        <hr>
+                        <small>Bali Tourist Automated System</small>
+                        """
+                        
+                        ok, msg = send_email_notification(receiver, subj, html_body)
+                        if ok:
+                            # 2. Lưu vào DB để hẹn giờ gửi lần 2
+                            run_query("""INSERT INTO payment_reminders 
+                                (ref_code, ref_name, amount, due_date, receiver_email, content, status, created_at)
+                                VALUES (?, ?, ?, ?, ?, ?, 'sent_1', ?)""", 
+                                (ref_code, ref_name, amount, due_date.strftime('%Y-%m-%d'), receiver, content, datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
+                                commit=True)
+                            
+                            st.success(f"✅ Đã gửi email lần 1 và lên lịch nhắc lần 2 vào ngày {due_date.strftime('%d/%m/%Y')}!"); time.sleep(1); st.rerun()
+                        else: st.error(msg)
+                else:
+                    st.warning("Vui lòng chọn Mã liên kết, nhập Email và Nội dung.")
 
 def render_dashboard():
     st.title("🏠 Trang Chủ - Tổng Quan Kinh Doanh")
@@ -2452,7 +2714,7 @@ def render_sidebar(comp):
             st.rerun()
         
         st.markdown("### 🗂️ Phân Hệ Quản Lý")
-        module = st.selectbox("Chọn chức năng:", ["🏠 Trang Chủ", "🔖 Quản Lý Booking", "💰 Kiểm Soát Chi Phí", "💳 Quản Lý Công Nợ", "📦 Quản Lý Tour ", "🤝 Quản Lý Khách Hàng", "👥 Quản Lý Nhân Sự", "🔍 Tra cứu thông tin"], label_visibility="collapsed")
+        module = st.selectbox("Chọn chức năng:", ["🏠 Trang Chủ", "📅 Lịch Thông Báo", "🔖 Quản Lý Booking", "💰 Kiểm Soát Chi Phí", "💳 Quản Lý Công Nợ", "📦 Quản Lý Tour ", "🤝 Quản Lý Khách Hàng", "👥 Quản Lý Nhân Sự", "🔍 Tra cứu thông tin"], label_visibility="collapsed")
         
         menu = None
         if module == "💰 Kiểm Soát Chi Phí":
@@ -3962,8 +4224,13 @@ def render_booking_management():
                             st.session_state.combo_list.append(f"🔖 {so_n}"); st.rerun()
                 with c_list:
                     st.markdown("##### Danh sách đã thêm")
-                    for i, item in enumerate(st.session_state.combo_list): st.text(f"{i+1}. {item}")
-                    if st.session_state.combo_list and st.button("Xóa hết", type="secondary"): st.session_state.combo_list = []; st.rerun()
+                    # [FIX] Dùng list() để ép kiểu rõ ràng, Pylance sẽ hiểu đây là danh sách lặp được
+                    safe_combo_list = list(st.session_state.get("combo_list", []))
+                    for i, item in enumerate(safe_combo_list): st.text(f"{i+1}. {item}")
+                    
+                    if st.session_state.get("combo_list") and st.button("Xóa hết", type="secondary"): 
+                        st.session_state.combo_list = []
+                        st.rerun()
                 
                 st.divider()
                 st.markdown("##### 💰 Thông tin tài chính")
@@ -6769,12 +7036,14 @@ def main():
 
     if module == "🏠 Trang Chủ":
         render_dashboard()
+    elif module == "📅 Lịch Thông Báo":
+        render_notification_calendar()
+    elif module == "🔖 Quản Lý Booking":
+        render_booking_management()
     elif module == "💰 Kiểm Soát Chi Phí":
         render_cost_control(menu)
     elif module == "💳 Quản Lý Công Nợ":
         render_debt_management()
-    elif module == "🔖 Quản Lý Booking":
-        render_booking_management()
     elif module == "📦 Quản Lý Tour ":
         render_tour_management()
     elif module == "🤝 Quản Lý Khách Hàng":
