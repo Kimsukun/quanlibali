@@ -13,116 +13,57 @@ import sys
 import subprocess
 import random
 import string
-from PIL import Image
+from PIL import Image, ImageEnhance
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
-from PIL import ImageEnhance
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.lib.utils import ImageReader
+from reportlab.lib.colors import HexColor
 from typing import Any, List, Optional, Union, Literal, overload, Dict
 
-# --- AUTO INSTALL FUNCTION ---
-def auto_install(package):
-    """Tự động cài đặt thư viện vào đúng môi trường Python đang chạy"""
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-        return True
-    except: return False
+# --- QUAN TRỌNG: CẤU HÌNH TRANG PHẢI Ở ĐẦU TIÊN ---
+st.set_page_config(
+    page_title="Quản Lý Hóa Đơn Pro", 
+    page_icon="🌸", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-try:
-    import gspread
-    from google.oauth2.service_account import Credentials
-    from googleapiclient.discovery import build
-    from googleapiclient.http import MediaIoBaseUpload
-except ImportError:
-    auto_install("gspread")
-    auto_install("google-api-python-client")
-    import gspread
-    from google.oauth2.service_account import Credentials
-    from googleapiclient.discovery import build
-    from googleapiclient.http import MediaIoBaseUpload
+# --- IMPORTS KHÁC (Không dùng auto_install nữa) ---
+import gspread
+from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
+import cv2
+import numpy as np
 
 # --- OCR CONFIGURATION ---
 try:
     import pytesseract
-    # CODE MỚI (Tự động nhận diện môi trường)
-    if os.path.exists(r'C:\Program Files\Tesseract-OCR\tesseract.exe'):
-        # Chạy trên máy tính Windows cá nhân
+    # Cấu hình đường dẫn Tesseract
+    if sys.platform.startswith('win'):
+        # Đường dẫn cho Windows (Local)
         pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
     else:
         # Chạy trên Streamlit Cloud (Linux) - Không cần set path, nó tự tìm
+        # Nếu cần thiết: pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
         pass
     HAS_OCR = True
 except ImportError:
     HAS_OCR = False
     pytesseract = None
-except Exception: # Bắt các lỗi khác, ví dụ như không tìm thấy Tesseract
-    HAS_OCR = False
-    pytesseract = None
 
-# --- EXCEL LIBS CHECK ---
-try:
-    import openpyxl
-    HAS_OPENPYXL = True
-except ImportError:
-    if auto_install("openpyxl"):
-        try: import openpyxl; HAS_OPENPYXL = True
-        except: HAS_OPENPYXL = False
-    else: HAS_OPENPYXL = False
-
-try:
-    import xlsxwriter
-    HAS_XLSXWRITER = True
-except ImportError:
-    if auto_install("xlsxwriter"):
-        try: import xlsxwriter; HAS_XLSXWRITER = True
-        except: HAS_XLSXWRITER = False
-    else: HAS_XLSXWRITER = False
-
-# --- CV & NUMPY LIBS CHECK ---
-cv2: Any = None
-np: Any = None
-HAS_CV = False # Default to False
-try:
-    import cv2
-    import numpy as np
-    HAS_CV = True
-except ImportError:
-    if auto_install("opencv-python-headless") and auto_install("numpy"):
-        try: import cv2; import numpy as np; HAS_CV = True # type: ignore
-        except: HAS_CV = False
-    else:
-        HAS_CV = False
-
-# --- DOCX LIB CHECK ---
-Document = None
-Pt = None
-Inches = None
-Cm = None
-WD_ALIGN_PARAGRAPH = None
-HAS_DOCX = False
-
-try:
-    from docx import Document
-    from docx.shared import Pt, Inches, Cm
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    HAS_DOCX = True
-except ImportError:
-    if auto_install("python-docx"):
-        try: 
-            from docx import Document
-            from docx.shared import Pt, Inches, Cm
-            from docx.enum.text import WD_ALIGN_PARAGRAPH
-            HAS_DOCX = True
-        except: pass
-
-# ==========================================
-# 1. CẤU HÌNH TRANG & KHỞI TẠO MÔI TRƯỜNG
-# ==========================================
-st.set_page_config(
-    page_title="Quản Lý Hóa Đơn Pro ", 
-    page_icon="🌸", 
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# --- EXCEL & DOCX LIBS ---
+import openpyxl
+import xlsxwriter
+from docx import Document
+from docx.shared import Pt, Inches, Cm
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+HAS_OPENPYXL = True
+HAS_XLSXWRITER = True
+HAS_CV = True
+HAS_DOCX = True
 
 # --- CẤU HÌNH GOOGLE (Đã cập nhật theo thông tin của bạn) ---
 SCOPES = [
@@ -1281,7 +1222,7 @@ def create_handover_docx(tour_info, guests, hotels, restaurants, sightseeings, c
     run_comp.font.color.rgb = None # Black
     
     p.add_run(f"Địa chỉ: {comp_data['address']}\n")
-    p.add_run(f"Điện thoại: {comp_data['phone']}")
+    p.add_run(f"Mã Số Thuế: {comp_data['phone']}")
     
     doc.add_paragraph("_" * 60).alignment = WD_ALIGN_PARAGRAPH.CENTER # type: ignore
     doc.add_paragraph()
@@ -1442,6 +1383,595 @@ def create_handover_docx(tour_info, guests, hotels, restaurants, sightseeings, c
     buffer.seek(0)
     return buffer
 
+# --- HÀM ĐỌC SỐ TIỀN BẰNG CHỮ (VIETNAMESE) ---
+def read_money_vietnamese(amount):
+    if amount == 0: return "Không đồng"
+    
+    digits = ["không", "một", "hai", "ba", "bốn", "năm", "sáu", "bảy", "tám", "chín"]
+    units = ["", "nghìn", "triệu", "tỷ"]
+    
+    def read_group(n):
+        res = ""
+        h = n // 100
+        t = (n % 100) // 10
+        u = n % 10
+        
+        if h > 0:
+            res += digits[h] + " trăm "
+        elif n > 0: # Có hàng chục hoặc đơn vị nhưng hàng trăm = 0 (xử lý ở loop chính tốt hơn, đây là logic đơn giản)
+            pass 
+            
+        if t > 1:
+            res += digits[t] + " mươi "
+            if u == 1: res += "mốt "
+            elif u == 5: res += "lăm "
+            elif u > 0: res += digits[u] + " "
+        elif t == 1:
+            res += "mười "
+            if u == 1: res += "một "
+            elif u == 5: res += "lăm "
+            elif u > 0: res += digits[u] + " "
+        else: # t = 0
+            if h > 0 and u > 0: res += "lẻ "
+            if u > 0: res += digits[u] + " "
+        return res
+
+    s_num = "{:.0f}".format(amount)
+    groups = []
+    while len(s_num) > 0:
+        groups.append(int(s_num[-3:]))
+        s_num = s_num[:-3]
+    
+    ret = ""
+    for i, g in enumerate(groups):
+        if g > 0:
+            s_g = read_group(g)
+            # Xử lý số 0 trăm
+            if i < len(groups) - 1 and g < 100 and g > 0: 
+                s_g = "không trăm " + s_g
+                
+            ret = s_g + units[i] + " " + ret
+            
+    ret = ret.strip()
+    # Capitalize first letter
+    if ret:
+        ret = ret[0].upper() + ret[1:]
+    
+    return ret + " đồng"
+
+def create_voucher_pdf(voucher_data):
+    """Tạo file PDF phiếu thu/chi đẹp, có logo và màu sắc"""
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    
+    # Cấu hình Font
+    font_name = 'Helvetica' # Fallback
+    try:
+        font_path = r"C:\Windows\Fonts\times.ttf"
+        if os.path.exists(font_path):
+            pdfmetrics.registerFont(TTFont('TimesNewRoman', font_path))
+            font_name = 'TimesNewRoman'
+        else:
+            font_path = r"C:\Windows\Fonts\arial.ttf"
+            if os.path.exists(font_path):
+                pdfmetrics.registerFont(TTFont('Arial', font_path))
+                font_name = 'Arial'
+    except: pass
+
+    comp = get_company_data()
+    
+    # Màu sắc chủ đạo
+    primary_color = "#2E7D32" if voucher_data['type'] == 'THU' else "#C62828" # Xanh cho Thu, Đỏ cho Chi
+    text_color = "#212121"
+    
+    # --- HEADER ---
+    # Logo
+    logo_height = 60
+    header_y = height - 50
+    header_x_text = 50
+    
+    if comp['logo_b64_str']:
+        try:
+            logo_data = base64.b64decode(comp['logo_b64_str'])
+            image_stream = io.BytesIO(logo_data)
+            img_reader = ImageReader(image_stream)
+            # Tính tỷ lệ ảnh
+            iw, ih = img_reader.getSize()
+            aspect = iw / float(ih)
+            draw_w = logo_height * aspect
+            
+            c.drawImage(img_reader, 50, header_y - logo_height, width=draw_w, height=logo_height, mask='auto')
+            header_x_text = 50 + draw_w + 20
+        except: pass
+
+    # --- LOGO CHÌM (WATERMARK) ---
+    if comp['logo_b64_str']:
+        try:
+            c.saveState()
+            logo_data = base64.b64decode(comp['logo_b64_str'])
+            image_stream = io.BytesIO(logo_data)
+            img_reader = ImageReader(image_stream)
+            iw, ih = img_reader.getSize()
+            aspect = iw / float(ih)
+            wm_width = 300
+            wm_height = wm_width / aspect
+            c.setFillAlpha(0.1) # Độ mờ 10%
+            # Vẽ chính giữa trang
+            c.drawImage(img_reader, (width - wm_width)/2, (height - wm_height)/2, width=wm_width, height=wm_height, mask='auto')
+            c.restoreState()
+        except: pass
+
+    # Thông tin công ty
+    c.setFillColor(HexColor(primary_color))
+    c.setFont(font_name, 16)
+    c.drawString(header_x_text, header_y - 15, comp['name'].upper())
+    
+    c.setFillColor(HexColor(text_color))
+    c.setFont(font_name, 10)
+    c.drawString(header_x_text, header_y - 35, f"ĐC: {comp['address']}")
+    c.drawString(header_x_text, header_y - 50, f"MST: {comp['phone']}")
+    
+    # Đường kẻ trang trí
+    c.setStrokeColor(HexColor(primary_color))
+    c.setLineWidth(2)
+    c.line(50, header_y - 70, width - 50, header_y - 70)
+    
+    # --- TIÊU ĐỀ ---
+    title = "PHIẾU THU TIỀN" if voucher_data['type'] == 'THU' else "PHIẾU CHI TIỀN"
+    c.setFillColor(HexColor(primary_color))
+    c.setFont(font_name, 24)
+    c.drawCentredString(width/2, height - 150, title)
+    
+    c.setFillColor(HexColor(text_color))
+    c.setFont(font_name, 11)
+    c.drawCentredString(width/2, height - 170, f"Ngày: {voucher_data['date']}")
+    
+    # --- NỘI DUNG ---
+    # Lấy tên khách hàng nếu có
+    person_name = ""
+    ref_code = voucher_data.get('ref_code', '')
+    if ref_code:
+        try:
+            # Thử tìm trong Tours
+            t = run_query("SELECT customer_name FROM tours WHERE tour_code=?", (ref_code,), fetch_one=True)
+            if t and t['customer_name']: person_name = t['customer_name']
+            else:
+                # Thử tìm trong Bookings
+                b = run_query("SELECT customer_info FROM service_bookings WHERE code=?", (ref_code,), fetch_one=True)
+                if b and b['customer_info']: person_name = b['customer_info'].split(' - ')[0]
+        except: pass
+
+    # --- TÍNH TOÁN TÀI CHÍNH (MỚI) ---
+    contract_val = 0.0
+    total_paid = 0.0
+    remaining = 0.0
+    
+    if ref_code:
+        # 1. Lấy giá trị hợp đồng
+        # Thử tìm Tour
+        t_info = run_query("SELECT * FROM tours WHERE tour_code=?", (ref_code,), fetch_one=True)
+        if t_info:
+            t_dict = dict(t_info)
+            final_price = float(t_dict.get('final_tour_price', 0) or 0)
+            child_price = float(t_dict.get('child_price', 0) or 0)
+            final_qty = float(t_dict.get('final_qty', 0) or 0)
+            child_qty = float(t_dict.get('child_qty', 0) or 0)
+            if final_qty == 0: final_qty = float(t_dict.get('guest_count', 1))
+            contract_val = (final_price * final_qty) + (child_price * child_qty)
+        else:
+            # Thử tìm Booking
+            b_info = run_query("SELECT selling_price FROM service_bookings WHERE code=?", (ref_code,), fetch_one=True)
+            if b_info:
+                contract_val = float(b_info['selling_price'] or 0)
+        
+        # 2. Lấy tổng đã thu (Bao gồm cả phiếu vừa tạo nếu đã lưu DB)
+        txns = run_query("SELECT type, amount FROM transaction_history WHERE ref_code=?", (ref_code,))
+        if txns:
+            paid_sum = sum(r['amount'] for r in txns if r['type'] == 'THU')
+            refund_sum = sum(r['amount'] for r in txns if r['type'] == 'CHI')
+            total_paid = paid_sum - refund_sum
+            
+        remaining = contract_val - total_paid
+
+    # --- VẼ PDF ---
+    y = height - 220
+    x_label = 70
+    x_val = 200
+    line_height = 30
+    
+    # Vẽ khung nền mờ
+    bg_color = "#E8F5E9" if voucher_data['type'] == 'THU' else "#FFEBEE"
+    c.setFillColor(HexColor(bg_color))
+    # Tăng chiều cao khung để chứa thêm thông tin (210 -> 330)
+    c.roundRect(50, y - 310, width - 100, 330, 10, fill=1, stroke=0)
+    
+    c.setFillColor(HexColor(text_color))
+    
+    def draw_line_content(label, value, y_pos, is_money=False):
+        c.setFont(font_name, 12)
+        c.drawString(x_label, y_pos, label)
+        
+        if is_money:
+            c.setFont(font_name, 14)
+            c.setFillColor(HexColor(primary_color))
+            c.drawString(x_val, y_pos, value)
+            c.setFillColor(HexColor(text_color)) # Reset
+        else:
+            c.setFont(font_name, 12)
+            if value:
+                c.drawString(x_val, y_pos, value)
+            else:
+                # Vẽ dòng chấm
+                c.setStrokeColor(HexColor("#BDBDBD"))
+                c.setLineWidth(1)
+                c.setDash(1, 3)
+                c.line(x_val, y_pos - 3, width - 70, y_pos - 3)
+                c.setDash([])
+
+    label_person = "Người nộp tiền:" if voucher_data['type'] == 'THU' else "Người nhận tiền:"
+    draw_line_content(label_person, person_name, y); y -= line_height
+    draw_line_content("Địa chỉ/SĐT:", "", y); y -= line_height
+    draw_line_content("Lý do:", f"{voucher_data['note']} (Mã: {voucher_data['ref_code']})", y); y -= line_height
+    draw_line_content("Số tiền:", f"{format_vnd(voucher_data['amount'])} VND", y, is_money=True); y -= line_height
+    draw_line_content("Bằng chữ:", read_money_vietnamese(voucher_data['amount']), y); y -= line_height
+    
+    # --- CÁC DÒNG MỚI ---
+    draw_line_content("Tổng giá trị HĐ:", f"{format_vnd(contract_val)} VND", y); y -= line_height
+    draw_line_content("Đã thanh toán:", f"{format_vnd(total_paid)} VND", y); y -= line_height
+    draw_line_content("Còn lại:", f"{format_vnd(remaining)} VND", y); y -= line_height
+    draw_line_content("Người xuất phiếu:", voucher_data.get('issuer', ''), y); y -= line_height
+
+    draw_line_content("Kèm theo:", "", y); y -= line_height
+    
+    # --- CHỮ KÝ ---
+    y_sig = y - 40
+    sigs = ["Giám đốc", "Kế toán trưởng", "Người lập phiếu", "Người nộp/nhận"]
+    x_positions = [50, 180, 310, 440]
+    for i, sig in enumerate(sigs):
+        c.setFont(font_name, 11)
+        c.setFillColor(HexColor(text_color))
+        c.drawCentredString(x_positions[i] + 40, y_sig, sig)
+        c.setFont(font_name, 9)
+        c.setFillColor(HexColor("#757575"))
+        c.drawCentredString(x_positions[i] + 40, y_sig - 15, "(Ký, họ tên)")
+        
+    c.save()
+    buffer.seek(0)
+    return buffer
+
+def create_booking_cfm_pdf(booking_info, company_info):
+    """Tạo file PDF Booking Confirmation (CFM)"""
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    
+    # --- CẤU HÌNH FONT (Tương tự create_voucher_pdf) ---
+    font_name = 'Helvetica'
+    font_bold = 'Helvetica-Bold'
+    try:
+        font_path = r"C:\Windows\Fonts\times.ttf"
+        font_path_bd = r"C:\Windows\Fonts\timesbd.ttf"
+        if os.path.exists(font_path) and os.path.exists(font_path_bd):
+            pdfmetrics.registerFont(TTFont('TimesNewRoman', font_path))
+            pdfmetrics.registerFont(TTFont('TimesNewRoman-Bold', font_path_bd))
+            font_name = 'TimesNewRoman'
+            font_bold = 'TimesNewRoman-Bold'
+        else:
+            # Fallback cho Arial nếu không có Times
+            font_path_arial = r"C:\Windows\Fonts\arial.ttf"
+            if os.path.exists(font_path_arial):
+                pdfmetrics.registerFont(TTFont('Arial', font_path_arial))
+                font_name = 'Arial'
+                font_bold = 'Arial' # Arial thường không tách file bold rõ ràng trong code đơn giản
+    except: pass
+
+    # --- MÀU SẮC ---
+    primary_color = "#1B5E20" # Xanh đậm thương hiệu
+    text_color = "#212121"
+    line_color = "#BDBDBD"
+
+    # --- HEADER ---
+    y = height - 50
+    # Logo
+    if company_info['logo_b64_str']:
+        try:
+            logo_data = base64.b64decode(company_info['logo_b64_str'])
+            image_stream = io.BytesIO(logo_data)
+            img_reader = ImageReader(image_stream)
+            iw, ih = img_reader.getSize()
+            aspect = iw / float(ih)
+            logo_h = 60
+            logo_w = logo_h * aspect
+            c.drawImage(img_reader, 40, y - logo_h, width=logo_w, height=logo_h, mask='auto')
+        except: pass
+
+    # Thông tin công ty (Căn phải)
+    c.setFillColor(HexColor(primary_color))
+    c.setFont(font_bold, 16)
+    c.drawRightString(width - 40, y - 15, company_info['name'].upper())
+    
+    c.setFillColor(HexColor(text_color))
+    c.setFont(font_name, 10)
+    c.drawRightString(width - 40, y - 30, f"Add: {company_info['address']}")
+    c.drawRightString(width - 40, y - 45, f"Hotline: {company_info['phone']}")
+    
+    y -= 80
+    c.setStrokeColor(HexColor(primary_color))
+    c.setLineWidth(2)
+    c.line(40, y, width - 40, y)
+    
+    # --- TITLE ---
+    y -= 40
+    c.setFillColor(HexColor(primary_color))
+    c.setFont(font_bold, 20)
+    c.drawCentredString(width/2, y, "BOOKING CONFIRMATION")
+    
+    y -= 25
+    c.setFillColor(HexColor(text_color))
+    c.setFont(font_name, 11)
+    c.drawCentredString(width/2, y, f"A warm greeting from {company_info['name']}!")
+    
+    # --- XỬ LÝ DỮ LIỆU BOOKING ---
+    # Parse Customer Info
+    cust_raw = booking_info.get('customer_info', '')
+    cust_name = cust_raw.split(' - ')[0] if ' - ' in cust_raw else cust_raw
+    
+    # Parse Dates from Details
+    details = booking_info.get('details', '')
+    dates = re.findall(r'\d{1,2}[/-]\d{1,2}[/-]\d{4}', details)
+    check_in = dates[0] if len(dates) > 0 else booking_info.get('created_at', '')
+    check_out = dates[1] if len(dates) > 1 else "N/A"
+    
+    # --- PHẦN 1: THÔNG TIN CHUNG ---
+    y -= 40
+    c.setFillColor(HexColor(primary_color))
+    c.setFont(font_bold, 12)
+    c.drawString(40, y, "I. GENERAL INFORMATION")
+    y -= 20
+    
+    # Vẽ khung thông tin
+    c.setStrokeColor(HexColor(line_color))
+    c.setLineWidth(1)
+    c.rect(40, y - 70, width - 80, 80, fill=0)
+    
+    c.setFillColor(HexColor(text_color))
+    c.setFont(font_name, 11)
+    
+    # Cột 1
+    c.drawString(50, y - 20, "Attention to:")
+    c.setFont(font_bold, 11); c.drawString(130, y - 20, cust_name); c.setFont(font_name, 11)
+    
+    c.drawString(50, y - 40, "Booking Code:")
+    c.setFont(font_bold, 11); c.drawString(130, y - 40, booking_info['code']); c.setFont(font_name, 11)
+    
+    c.drawString(50, y - 60, "Date Created:")
+    c.drawString(130, y - 60, booking_info.get('created_at', ''))
+    
+    # Cột 2
+    c.drawString(300, y - 20, "Service Date/Check-in:")
+    c.drawString(430, y - 20, check_in)
+    
+    if check_out != "N/A":
+        c.drawString(300, y - 40, "Check-out:")
+        c.drawString(430, y - 40, check_out)
+        
+    c.drawString(300, y - 60, "Status:")
+    status_txt = "Confirmed" if booking_info.get('status') != 'deleted' else "Cancelled"
+    c.setFillColor(HexColor("#2E7D32" if status_txt == "Confirmed" else "#C62828"))
+    c.setFont(font_bold, 11)
+    c.drawString(430, y - 60, status_txt)
+    c.setFillColor(HexColor(text_color))
+
+    # --- PHẦN 2: CHI TIẾT DỊCH VỤ ---
+    y -= 110
+    c.setFillColor(HexColor(primary_color))
+    c.setFont(font_bold, 12)
+    c.drawString(40, y, "II. SERVICE DETAILS")
+    y -= 25
+    
+    # Header Bảng
+    c.setFillColor(HexColor("#E8F5E9"))
+    c.rect(40, y - 5, width - 80, 20, fill=1, stroke=0) # Header BG
+    c.setFillColor(HexColor(primary_color))
+    c.setFont(font_bold, 10)
+    c.drawString(50, y, "SERVICE NAME")
+    c.drawString(250, y, "DETAILS / DURATION")
+    c.drawString(450, y, "NOTE")
+    
+    y -= 20
+    c.setFillColor(HexColor(text_color))
+    c.setFont(font_name, 10)
+    
+    # Nội dung bảng (Xử lý Combo tách dòng)
+    items = []
+    if booking_info.get('type') == 'COMBO':
+        # Tách các item trong combo (ngăn cách bởi | hoặc dòng mới)
+        raw_items = re.split(r'[|\n]', details)
+        for item in raw_items:
+            if item.strip(): items.append((item.strip(), ""))
+    else:
+        items.append((booking_info['name'], details))
+        
+    for name, det in items:
+        # Tự động xuống dòng nếu text quá dài (Logic đơn giản)
+        c.drawString(50, y, name[:45] + "..." if len(name)>45 else name)
+        c.drawString(250, y, det[:50] + "..." if len(det)>50 else det)
+        c.drawString(450, y, "") # Note để trống hoặc lấy từ đâu đó
+        
+        # Kẻ dòng dưới
+        c.setStrokeColor(HexColor("#EEEEEE"))
+        c.line(40, y - 5, width - 40, y - 5)
+        y -= 25
+        
+        if y < 100: # Sang trang mới nếu hết chỗ (Đơn giản hóa: chỉ break, không tạo trang mới trong code này)
+            break
+
+    # --- PHẦN 3: INCLUDED & FOOTER ---
+    y -= 20
+    c.setFillColor(HexColor(primary_color))
+    c.setFont(font_bold, 12)
+    c.drawString(40, y, "III. INCLUDED SERVICES")
+    y -= 20
+    c.setFillColor(HexColor(text_color))
+    c.setFont(font_name, 10)
+    c.drawString(50, y, "- Tax and Service charges.")
+    c.drawString(50, y - 15, "- 24/7 Support from our team.")
+    
+    # Signature
+    y -= 80
+    c.setFont(font_bold, 11)
+    c.drawCentredString(width - 100, y, "CONFIRMED BY")
+    c.setFont(font_name, 10)
+    c.drawCentredString(width - 100, y - 15, company_info['name'])
+    
+    # Dấu mộc giả lập (Text)
+    c.setFillColor(HexColor("#C62828"))
+    c.setFont(font_bold, 14)
+    c.saveState()
+    c.translate(width - 100, y - 50)
+    c.rotate(15)
+    c.drawCentredString(0, 0, "[SIGNED]")
+    c.restoreState()
+
+    c.save()
+    buffer.seek(0)
+    return buffer
+
+# ==========================================
+# 4. GIAO DIỆN & LOGIC MODULES
+# ==========================================
+
+def render_dashboard():
+    st.title("🏠 Trang Chủ - Tổng Quan Kinh Doanh")
+    
+    # User context
+    user_info = st.session_state.get("user_info", {})
+    role = user_info.get('role')
+    username = user_info.get('name')
+    
+    # Time context
+    now = datetime.now()
+    current_month = now.month
+    current_year = now.year
+    
+    st.markdown(f"### 📅 Số liệu tháng {current_month}/{current_year}")
+    
+    # Data fetching
+    # 1. Tours
+    tour_query = "SELECT * FROM tours WHERE status != 'deleted'"
+    tour_params = []
+    if role == 'sale':
+        tour_query += " AND sale_name=?"
+        tour_params.append(username)
+    tours = run_query(tour_query, tuple(tour_params))
+    
+    # 2. Bookings
+    bk_query = "SELECT * FROM service_bookings WHERE status != 'deleted'"
+    bk_params = []
+    if role == 'sale':
+        bk_query += " AND sale_name=?"
+        bk_params.append(username)
+    bookings = run_query(bk_query, tuple(bk_params))
+    
+    # 3. Costs (for tours)
+    all_items = run_query("SELECT tour_id, item_type, total_amount FROM tour_items")
+    items_map = {}
+    if all_items:
+        for item in all_items:
+            tid = item['tour_id']
+            itype = item['item_type']
+            amt = item['total_amount'] or 0
+            if tid not in items_map: items_map[tid] = {'EST': 0, 'ACT': 0}
+            items_map[tid][itype] += amt
+
+    # Processing
+    total_tour_rev = 0
+    total_tour_profit = 0
+    count_tours = 0
+    tours_in_month = []
+    
+    total_bk_rev = 0
+    total_bk_profit = 0
+    count_bks = 0
+    bks_in_month = []
+    
+    # Process Tours
+    if tours:
+        for t in tours:
+            t = dict(t)
+            try:
+                s_date = datetime.strptime(t['start_date'], '%d/%m/%Y')
+                if s_date.month == current_month and s_date.year == current_year:
+                    count_tours += 1
+                    
+                    final_price = float(t.get('final_tour_price', 0) or 0)
+                    child_price = float(t.get('child_price', 0) or 0)
+                    final_qty = float(t.get('final_qty', 0) or 0)
+                    child_qty = float(t.get('child_qty', 0) or 0)
+                    if final_qty == 0: final_qty = float(t.get('guest_count', 1))
+                    
+                    rev = (final_price * final_qty) + (child_price * child_qty)
+                    
+                    costs = items_map.get(t['id'], {'EST': 0, 'ACT': 0})
+                    est_cost = costs['EST']; act_cost = costs['ACT']
+                    
+                    if rev == 0:
+                        p_pct = t.get('est_profit_percent', 0) or 0
+                        t_pct = t.get('est_tax_percent', 0) or 0
+                        profit_est_val = est_cost * (p_pct/100)
+                        rev = (est_cost + profit_est_val) * (1 + t_pct/100)
+                    
+                    t_pct = t.get('est_tax_percent', 0) or 0
+                    net_rev = rev / (1 + t_pct/100) if (1 + t_pct/100) != 0 else rev
+                    prof = net_rev - act_cost
+                    
+                    total_tour_rev += rev; total_tour_profit += prof
+                    
+                    t_display = dict(t); t_display['revenue'] = rev; t_display['profit'] = prof
+                    tours_in_month.append(t_display)
+            except: pass
+
+    # Process Bookings
+    if bookings:
+        for b in bookings:
+            try:
+                c_date = datetime.strptime(str(b['created_at']).split(' ')[0], '%Y-%m-%d')
+                if c_date.month == current_month and c_date.year == current_year:
+                    count_bks += 1
+                    rev = float(b['selling_price'] or 0); prof = float(b['profit'] or 0)
+                    total_bk_rev += rev; total_bk_profit += prof
+                    b_display = dict(b); b_display['revenue'] = rev; b_display['profit'] = prof
+                    bks_in_month.append(b_display)
+            except: pass
+
+    # Display Metrics
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Tổng Doanh Thu", format_vnd(total_tour_rev + total_bk_rev) + " VND")
+    m2.metric("Tổng Lợi Nhuận", format_vnd(total_tour_profit + total_bk_profit) + " VND")
+    m3.metric("Số lượng Tour", count_tours)
+    m4.metric("Số lượng Booking", count_bks)
+    
+    st.divider()
+    c_left, c_right = st.columns(2)
+    with c_left:
+        st.subheader("📦 Tour trong tháng")
+        if tours_in_month:
+            df_t = pd.DataFrame(tours_in_month)[['start_date', 'tour_name', 'revenue', 'profit']]
+            df_t['revenue'] = df_t['revenue'].apply(lambda x: format_vnd(x) + " VND")
+            df_t['profit'] = df_t['profit'].apply(lambda x: format_vnd(x) + " VND")
+            st.dataframe(df_t, column_config={"start_date": "Ngày đi", "tour_name": "Tên đoàn", "revenue": "Doanh thu", "profit": "Lợi nhuận (TT)"}, use_container_width=True, hide_index=True)
+        else: st.info("Không có tour nào.")
+            
+    with c_right:
+        st.subheader("🔖 Booking trong tháng")
+        if bks_in_month:
+            df_b = pd.DataFrame(bks_in_month)[['created_at', 'name', 'revenue', 'profit']]
+            df_b['revenue'] = df_b['revenue'].apply(lambda x: format_vnd(x) + " VND")
+            df_b['profit'] = df_b['profit'].apply(lambda x: format_vnd(x) + " VND")
+            st.dataframe(df_b, column_config={"created_at": "Ngày tạo", "name": "Tên dịch vụ", "revenue": "Doanh thu", "profit": "Lợi nhuận"}, use_container_width=True, hide_index=True)
+        else: st.info("Không có booking nào.")
+
 # ==========================================
 # 4. GIAO DIỆN & LOGIC MODULES
 # ==========================================
@@ -1457,12 +1987,12 @@ def render_login_page(comp):
                 <div class="company-info-text">
                     <h1>{comp['name']}</h1>
                     <p>📍 {comp['address']}</p>
-                    <p>📞 {comp['phone']}</p>
+                    <p>MST: {comp['phone']}</p>
                 </div>
             </div>
             ''', unsafe_allow_html=True)
         else:
-            st.markdown(f"""<div style="text-align:center; margin-top:20px;"><h1 style="color:#28a745 !important;">{comp['name']}</h1><p>📍 {comp['address']}<br>📞 {comp['phone']}</p></div>""", unsafe_allow_html=True)
+            st.markdown(f"""<div style="text-align:center; margin-top:20px;"><h1 style="color:#28a745 !important;">{comp['name']}</h1><p>📍 {comp['address']}<br>MST: {comp['phone']}</p></div>""", unsafe_allow_html=True)
         
         tab_login, tab_reg = st.tabs(["🔐 Đăng nhập", "📝 Đăng ký"])
         with tab_login:
@@ -1613,7 +2143,7 @@ def render_admin_panel(comp):
         with st.form("comp_update"):
             cn = st.text_input("Tên", value=comp['name'])
             ca = st.text_input("Địa chỉ", value=comp['address'])
-            cp = st.text_input("SĐT", value=comp['phone'])
+            cp = st.text_input("Mã Số Thuế", value=comp['phone'])
             ul = st.file_uploader("Logo", type=['png','jpg'])
             if st.form_submit_button("Lưu"):
                 update_company_info(cn, ca, cp, ul.read() if ul else None)
@@ -1692,7 +2222,7 @@ def render_sidebar(comp):
             st.rerun()
         
         st.markdown("### 🗂️ Phân Hệ Quản Lý")
-        module = st.selectbox("Chọn chức năng:", ["🔖 Quản Lý Booking", "💰 Kiểm Soát Chi Phí", "💳 Quản Lý Công Nợ", "📦 Quản Lý Tour ", "🤝 Quản Lý Khách Hàng", "👥 Quản Lý Nhân Sự", "🔍 Tra cứu thông tin"], label_visibility="collapsed")
+        module = st.selectbox("Chọn chức năng:", ["🏠 Trang Chủ", "🔖 Quản Lý Booking", "💰 Kiểm Soát Chi Phí", "💳 Quản Lý Công Nợ", "📦 Quản Lý Tour ", "🤝 Quản Lý Khách Hàng", "👥 Quản Lý Nhân Sự", "🔍 Tra cứu thông tin"], label_visibility="collapsed")
         
         menu = None
         if module == "💰 Kiểm Soát Chi Phí":
@@ -2486,6 +3016,7 @@ def render_debt_management():
 
         # --- GIAO DIỆN CHÍNH ---
         col1, col2 = st.columns([1, 2])
+        remaining = 0.0
 
         with col1:
             st.markdown("#### 🔍 Chọn đối tượng")
@@ -2493,6 +3024,12 @@ def render_debt_management():
             selected_code = search_options.get(selected_label)
 
             if selected_code:
+                # Reset trạng thái phiếu vừa tạo nếu chuyển mã khác
+                if "last_voucher_code" not in st.session_state or st.session_state.last_voucher_code != selected_code:
+                    if "last_voucher" in st.session_state: del st.session_state.last_voucher
+                    if "last_voucher_pdf" in st.session_state: del st.session_state.last_voucher_pdf
+                    st.session_state.last_voucher_code = selected_code
+
                 st.markdown("---")
                 st.markdown("#### 📊 Tổng quan công nợ")
 
@@ -2537,63 +3074,170 @@ def render_debt_management():
 
                 with tab_add:
                     st.markdown("##### Tạo phiếu mới")
-                    with st.form(f"add_txn_{selected_code}", clear_on_submit=True):
-                        c1, c2 = st.columns(2)
-                        txn_type = c1.radio("Loại phiếu", ["THU", "CHI (Hoàn tiền)"], horizontal=True)
-                        txn_amount = c2.number_input("Số tiền", min_value=0.0, format="%.0f")
+                    
+                    # Hiển thị nút tải phiếu vừa tạo (nếu có)
+                    if "last_voucher" in st.session_state and st.session_state.last_voucher.get('ref_code') == selected_code:
+                        lv = st.session_state.last_voucher
+                        st.success("✅ Đã lưu phiếu thành công!")
                         
-                        c3, c4 = st.columns(2)
-                        txn_method = c3.selectbox("Hình thức", ["Chuyển khoản", "Tiền mặt"])
-                        txn_note = c4.text_input("Nội dung", placeholder="VD: Cọc lần 1, Thanh toán...")
-                        
-                        if st.form_submit_button("💾 Lưu Phiếu", type="primary", use_container_width=True):
-                            if txn_amount > 0 and txn_note:
-                                run_query(
-                                    "INSERT INTO transaction_history (ref_code, type, amount, payment_method, note, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                                    (selected_code, txn_type, txn_amount, txn_method, txn_note, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-                                    commit=True
-                                )
-                                st.success("Đã lưu phiếu thành công!")
-                                time.sleep(0.5)
-                                st.rerun()
-                            else:
-                                st.warning("Vui lòng nhập số tiền và nội dung.")
+                        # Sử dụng cache PDF nếu có để tránh tạo lại liên tục
+                        if "last_voucher_pdf" in st.session_state:
+                            pdf_data = st.session_state.last_voucher_pdf
+                        else:
+                            pdf_data = create_voucher_pdf(lv)
+                            st.session_state.last_voucher_pdf = pdf_data
+
+                        st.download_button(
+                            label=f"📥 Tải Phiếu {lv['type']} (PDF)",
+                            data=pdf_data,
+                            file_name=f"Phieu_{lv['type']}_{lv['date'].replace('/','')}.pdf",
+                            mime="application/pdf",
+                            type="primary"
+                        )
+                        st.divider()
+
+                    # Form nhập liệu (Luôn hiển thị)
+                    k_amt = f"txn_amt_{selected_code}"
+                    k_note = f"txn_note_{selected_code}"
+                    
+                    if k_amt not in st.session_state:
+                        if remaining >= 1:
+                            st.session_state[k_amt] = "{:,.0f}".format(remaining).replace(",", ".") + " VND"
+                        else:
+                            st.session_state[k_amt] = ""
+                    
+                    def fmt_txn_amt_dynamic(key_name):
+                        if key_name in st.session_state:
+                            val = st.session_state[key_name]
+                            try:
+                                clean_val = val.replace('.', '').replace(',', '').replace(' VND', '').strip()
+                                if clean_val:
+                                    v_float = float(clean_val)
+                                    st.session_state[key_name] = "{:,.0f}".format(v_float).replace(",", ".") + " VND"
+                            except: pass
+
+                    c1, c2 = st.columns(2)
+                    txn_type = c1.radio("Loại phiếu", ["THU", "CHI (Hoàn tiền)"], horizontal=True, key=f"txn_type_{selected_code}")
+                    
+                    txn_amount_input = c2.text_input("Số tiền", key=k_amt, on_change=fmt_txn_amt_dynamic, args=(k_amt,), help="Nhập số tiền (VD: 1.000.000)")
+                    
+                    try:
+                        txn_amount = float(txn_amount_input.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                    except: txn_amount = 0.0
+                    
+                    c3, c4 = st.columns(2)
+                    txn_method = c3.selectbox("Hình thức", ["Chuyển khoản", "Tiền mặt"], key=f"txn_method_{selected_code}")
+                    txn_note = c4.text_input("Nội dung", placeholder="VD: Cọc lần 1, Thanh toán...", key=k_note)
+                    
+                    btn_label = "💾 Tạo Phiếu Thu" if txn_type == "THU" else "💾 Tạo Phiếu Chi"
+                    if st.button(btn_label, type="primary", use_container_width=True, key=f"btn_save_txn_{selected_code}"):
+                        if txn_amount > 0 and txn_note:
+                            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            run_query(
+                                "INSERT INTO transaction_history (ref_code, type, amount, payment_method, note, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                                (selected_code, txn_type, txn_amount, txn_method, txn_note, now_str),
+                                commit=True
+                            )
+                            
+                            # Lưu thông tin để tạo PDF
+                            v_data = {
+                                'ref_code': selected_code,
+                                'type': txn_type,
+                                'amount': txn_amount,
+                                'method': txn_method,
+                                'note': txn_note,
+                                'date': datetime.now().strftime("%d/%m/%Y"),
+                                'issuer': st.session_state.user_info.get('name', '')
+                            }
+                            st.session_state.last_voucher = v_data
+                            
+                            # Tạo PDF ngay và cache lại
+                            pdf_bytes = create_voucher_pdf(v_data)
+                            st.session_state.last_voucher_pdf = pdf_bytes
+                            
+                            if k_amt in st.session_state: del st.session_state[k_amt]
+                            if k_note in st.session_state: del st.session_state[k_note]
+                            st.rerun()
+                        else:
+                            st.warning("Vui lòng nhập số tiền và nội dung.")
 
                 with tab_history:
                     st.markdown("##### Lịch sử các lần thanh toán")
                     history = run_query("SELECT * FROM transaction_history WHERE ref_code=? ORDER BY id DESC", (selected_code,))
                     
                     if history:
+                        # Hiển thị dạng bảng cho gọn
                         df_hist = pd.DataFrame([dict(r) for r in history])
-                        df_hist['Xóa'] = False
-                        df_hist = df_hist[['Xóa', 'id', 'created_at', 'type', 'amount', 'payment_method', 'note']]
                         
-                        edited_df = st.data_editor(
-                            df_hist,
-                            column_config={
-                                "Xóa": st.column_config.CheckboxColumn(required=True),
-                                "id": st.column_config.NumberColumn(disabled=True),
-                                "created_at": st.column_config.TextColumn("Ngày tạo", disabled=True),
-                                "type": st.column_config.TextColumn("Loại", disabled=True),
-                                "amount": st.column_config.NumberColumn("Số tiền", format="%d", disabled=True),
-                                "payment_method": st.column_config.TextColumn("Hình thức", disabled=True),
-                                "note": st.column_config.TextColumn("Nội dung", disabled=True),
-                            },
-                            hide_index=True,
+                        # Format dữ liệu hiển thị
+                        df_display = df_hist.copy()
+                        df_display['created_at'] = pd.to_datetime(df_display['created_at'], errors='coerce').dt.strftime('%d/%m/%Y')
+                        df_display['amount'] = df_display['amount'].apply(lambda x: format_vnd(x))
+                        
+                        df_display = df_display.rename(columns={
+                            'created_at': 'Ngày',
+                            'type': 'Loại',
+                            'amount': 'Số tiền',
+                            'payment_method': 'Hình thức',
+                            'note': 'Nội dung',
+                            'id': 'ID'
+                        })
+                        
+                        st.dataframe(
+                            df_display[['ID', 'Ngày', 'Loại', 'Số tiền', 'Hình thức', 'Nội dung']],
                             use_container_width=True,
-                            key=f"history_editor_{selected_code}",
+                            hide_index=True
                         )
                         
-                        if st.button("🗑️ Xóa các phiếu đã chọn", type="secondary", key=f"delete_txn_{selected_code}"):
-                            selected_ids = edited_df[edited_df['Xóa']]['id'].tolist()
-                            if selected_ids:
-                                for i in selected_ids:
-                                    run_query("DELETE FROM transaction_history WHERE id=?", (i,), commit=True)
-                                st.success(f"Đã xóa {len(selected_ids)} phiếu!")
-                                time.sleep(1)
-                                st.rerun()
-                            else:
-                                st.warning("Bạn chưa chọn phiếu nào để xóa.")
+                        st.divider()
+                        st.markdown("###### 🛠️ Thao tác (Tải phiếu / Xóa)")
+                        
+                        # Tạo danh sách lựa chọn
+                        txn_options = {}
+                        for r in history:
+                            try: d_lbl = datetime.strptime(r['created_at'], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y")
+                            except: d_lbl = r['created_at']
+                            label = f"#{r['id']} | {d_lbl} | {r['type']} | {format_vnd(r['amount'])}"
+                            txn_options[label] = r
+
+                        selected_txn_label = st.selectbox("Chọn giao dịch:", ["-- Chọn giao dịch --"] + list(txn_options.keys()))
+                        
+                        if selected_txn_label and selected_txn_label != "-- Chọn giao dịch --":
+                            txn = txn_options[selected_txn_label]
+                            
+                            # Chỉ tạo PDF khi đã chọn (Tối ưu hiệu năng)
+                            try: d_str = datetime.strptime(txn['created_at'], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y")
+                            except: d_str = txn['created_at']
+                            
+                            v_data = {
+                                'ref_code': selected_code,
+                                'type': txn['type'],
+                                'amount': txn['amount'],
+                                'method': txn['payment_method'],
+                                'note': txn['note'],
+                                'date': d_str,
+                                'issuer': st.session_state.user_info.get('name', '')
+                            }
+                            pdf_bytes = create_voucher_pdf(v_data)
+                            
+                            c_dl, c_del = st.columns([1, 1])
+                            with c_dl:
+                                st.download_button(
+                                    label="📥 Tải Phiếu (PDF)",
+                                    data=pdf_bytes,
+                                    file_name=f"Phieu_{txn['type']}_{txn['id']}.pdf",
+                                    mime="application/pdf",
+                                    key=f"dl_hist_btn_{txn['id']}",
+                                    use_container_width=True,
+                                    type="primary"
+                                )
+                            
+                            with c_del:
+                                if st.button("🗑️ Xóa giao dịch này", key=f"del_hist_btn_{txn['id']}", use_container_width=True):
+                                    run_query("DELETE FROM transaction_history WHERE id=?", (txn['id'],), commit=True)
+                                    st.success("Đã xóa!")
+                                    time.sleep(0.5)
+                                    st.rerun()
                     else:
                         st.info("Chưa có lịch sử giao dịch cho mã này.")
             else:
@@ -2687,6 +3331,80 @@ def render_debt_management():
                     use_container_width=True, hide_index=True
                 )
 
+                # --- TÍNH NĂNG XUẤT EXCEL CÔNG NỢ ---
+                st.write("")
+                if "debt_xls_data" not in st.session_state: st.session_state.debt_xls_data = None
+                
+                if st.button("📊 Tạo file Excel báo cáo"):
+                    buffer_debt = io.BytesIO()
+                    try:
+                        with pd.ExcelWriter(buffer_debt, engine='xlsxwriter') as writer:
+                            workbook: Any = writer.book
+                            worksheet = workbook.add_worksheet('CongNo')
+                            
+                            # Formats
+                            fmt_title = workbook.add_format({'bold': True, 'font_size': 16, 'align': 'center', 'valign': 'vcenter', 'font_color': '#B71C1C'})
+                            fmt_header = workbook.add_format({'bold': True, 'bg_color': '#FFEBEE', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_color': '#B71C1C', 'text_wrap': True})
+                            fmt_text = workbook.add_format({'border': 1, 'valign': 'vcenter', 'text_wrap': True})
+                            fmt_money = workbook.add_format({'border': 1, 'valign': 'vcenter', 'num_format': '#,##0'})
+                            fmt_comp = workbook.add_format({'bold': True, 'font_size': 12, 'font_color': '#1B5E20'})
+                            
+                            # Company Info
+                            comp_data = get_company_data()
+                            worksheet.write('A1', comp_data['name'], fmt_comp)
+                            worksheet.write('A2', f"ĐC: {comp_data['address']}")
+                            worksheet.write('A3', f"MST: {comp_data['phone']}")
+                            
+                            # Title
+                            worksheet.merge_range('A5:G5', "BÁO CÁO CÔNG NỢ KHÁCH HÀNG", fmt_title)
+                            worksheet.write('A6', f"Ngày xuất: {datetime.now().strftime('%d/%m/%Y')}")
+                            
+                            # Headers
+                            headers = ['Khách hàng', 'Tên Tour/Booking', 'Mã', 'Loại', 'Giá trị HĐ', 'Đã thu', 'Còn lại']
+                            for i, h in enumerate(headers):
+                                worksheet.write(7, i, h, fmt_header)
+                            
+                            # Data
+                            df_export = df_debt.sort_values(['customer_name', 'remaining'], ascending=[True, False])
+                            
+                            row = 8
+                            for _, r in df_export.iterrows():
+                                worksheet.write(row, 0, r['customer_name'], fmt_text)
+                                worksheet.write(row, 1, r['ref_name'], fmt_text)
+                                worksheet.write(row, 2, r['ref_code'], fmt_text)
+                                worksheet.write(row, 3, r['type'], fmt_text)
+                                worksheet.write(row, 4, r['contract_value'], fmt_money)
+                                worksheet.write(row, 5, r['paid'], fmt_money)
+                                worksheet.write(row, 6, r['remaining'], fmt_money)
+                                row += 1
+                                
+                            # Total row
+                            fmt_total = workbook.add_format({'bold': True, 'bg_color': '#FFCDD2', 'border': 1, 'num_format': '#,##0', 'align': 'right'})
+                            worksheet.merge_range(row, 0, row, 3, "TỔNG CỘNG", fmt_total)
+                            worksheet.write(row, 4, df_export['contract_value'].sum(), fmt_total)
+                            worksheet.write(row, 5, df_export['paid'].sum(), fmt_total)
+                            worksheet.write(row, 6, df_export['remaining'].sum(), fmt_total)
+                            
+                            # Column widths
+                            worksheet.set_column('A:A', 25)
+                            worksheet.set_column('B:B', 35)
+                            worksheet.set_column('C:D', 15)
+                            worksheet.set_column('E:G', 18)
+
+                        st.session_state.debt_xls_data = buffer_debt.getvalue()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Lỗi tạo file Excel: {e}")
+
+                if st.session_state.debt_xls_data:
+                    st.download_button(
+                        label="📥 Tải Báo Cáo Công Nợ (Excel)",
+                        data=st.session_state.debt_xls_data,
+                        file_name=f"BaoCao_CongNo_{datetime.now().strftime('%d%m%Y')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        type="primary"
+                    )
+
 def render_booking_management():
     st.title("🔖 Quản Lý Booking")
     st.caption("Quản lý các booking lẻ, booking dịch vụ (Không phải Tour trọn gói)")
@@ -2725,28 +3443,84 @@ def render_booking_management():
             st.divider()
 
             if bk_type == "🏨 Khách sạn":
-                st.markdown("##### 💰 Thông tin tài chính")
-                f1, f2 = st.columns(2)
-                net_price = f1.number_input("Giá nét", min_value=0.0, format="%.0f")
-                selling_price = f2.number_input("Giá bán", min_value=0.0, format="%.0f")
+                st.markdown("##### 🏨 Thông tin lưu trú & Tài chính")
                 
+                # [NEW] Move dates out to calculate nights
+                c_date, c_room = st.columns([2, 1])
+                dates = c_date.date_input("Thời gian lưu trú", value=[], help="Chọn ngày nhận và trả phòng", format="DD/MM/YYYY")
+                room_count = c_room.number_input("Số lượng phòng", min_value=1, step=1, value=1)
+                
+                nights = 1
+                if len(dates) == 2:
+                    nights = (dates[1] - dates[0]).days
+                    if nights < 1: nights = 1
+                    st.caption(f"Thời gian: {dates[0].strftime('%d/%m')} - {dates[1].strftime('%d/%m')} ({nights} đêm) x {room_count} phòng")
+                elif len(dates) == 1:
+                    st.caption("Vui lòng chọn ngày trả phòng.")
+                else:
+                    st.caption("Vui lòng chọn ngày nhận và trả phòng.")
+
+                # Financials
+                c1, c2, c3 = st.columns(3)
+                
+                # [CODE MỚI] Xử lý nhập tiền có định dạng
+                if "bk_hotel_net_val" not in st.session_state: st.session_state.bk_hotel_net_val = ""
+                if "bk_hotel_sell_val" not in st.session_state: st.session_state.bk_hotel_sell_val = ""
+
+                def fmt_hotel_net():
+                    val = st.session_state.bk_hotel_net_val
+                    try:
+                        v_float = float(val.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                        st.session_state.bk_hotel_net_val = "{:,.0f}".format(v_float).replace(",", ".") + " VND"
+                    except: pass
+                
+                def fmt_hotel_sell():
+                    val = st.session_state.bk_hotel_sell_val
+                    try:
+                        v_float = float(val.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                        st.session_state.bk_hotel_sell_val = "{:,.0f}".format(v_float).replace(",", ".") + " VND"
+                    except: pass
+
+                net_price_input = c1.text_input("Giá nét / đêm / phòng", key="bk_hotel_net_val", on_change=fmt_hotel_net, help="Nhập số tiền (VD: 1000000)")
+                selling_price_input = c2.text_input("Giá bán / đêm / phòng", key="bk_hotel_sell_val", on_change=fmt_hotel_sell, help="Nhập số tiền (VD: 1500000)")
+                
+                try: net_price_unit = float(net_price_input.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                except: net_price_unit = 0.0
+                
+                try: selling_price_unit = float(selling_price_input.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                except: selling_price_unit = 0.0
+                
+                # Tax logic
                 tax_option = st.radio("Giá nét đã bao gồm thuế?", ["Đã bao gồm thuế", "Chưa bao gồm thuế"], horizontal=True)
                 tax_percent = 0.0
-                net_price_incl_tax = net_price
-                
                 if tax_option == "Chưa bao gồm thuế":
                     tax_percent = st.number_input("Nhập % Thuế", min_value=0.0, max_value=100.0, step=0.5, format="%.1f")
-                    net_price_incl_tax = net_price * (1 + tax_percent / 100)
-                    st.info(f"Giá nét bao gồm thuế: **{format_vnd(net_price_incl_tax)}**")
+                
+                # Calculations
+                net_price_unit_incl_tax = net_price_unit * (1 + tax_percent / 100)
+                total_net = net_price_unit_incl_tax * nights * room_count
+                total_sell = selling_price_unit * nights * room_count
+                total_profit = total_sell - total_net
+                
+                # Display Table
+                st.markdown("###### 📊 Bảng tính chi tiết")
+                calc_df = pd.DataFrame({
+                    "Loại": ["Giá Nét (Vốn)", "Giá Bán (Doanh thu)"],
+                    "Đơn giá": [format_vnd(net_price_unit_incl_tax) + " VND", format_vnd(selling_price_unit) + " VND"],
+                    "Số lượng": [f"{nights} đêm x {room_count} phòng", f"{nights} đêm x {room_count} phòng"],
+                    "Thành tiền": [format_vnd(total_net) + " VND", format_vnd(total_sell) + " VND"]
+                })
+                st.dataframe(calc_df, use_container_width=True, hide_index=True)
+                
+                st.markdown(f"""<div style="background-color: #e8f5e9; padding: 10px; border-radius: 5px; border: 1px solid #c8e6c9; text-align: center;">
+                    <span style="color: #2e7d32; font-weight: bold; font-size: 1.1em;">LỢI NHUẬN DỰ KIẾN: {format_vnd(total_profit)} VND</span>
+                </div>""", unsafe_allow_html=True)
 
-                profit = selling_price - net_price_incl_tax
-                st.metric("Lợi nhuận dự kiến", f"{format_vnd(profit)} VND")
                 st.divider()
                 st.text_input("Sales phụ trách", value=current_user_name, disabled=True)
                 with st.form("bk_hotel", clear_on_submit=True):
-                    c1, c2 = st.columns(2)
-                    h_name = c1.text_input("Tên Khách sạn", placeholder="VD: Mường Thanh Luxury")
-                    dates = c2.date_input("Thời gian lưu trú", value=[], help="Chọn ngày nhận và trả phòng", format="DD/MM/YYYY")
+                    h_name = st.text_input("Tên Khách sạn", placeholder="VD: Mường Thanh Luxury")
+                    # Dates are already outside
                     
                     c_cust_n, c_cust_p = st.columns(2)
                     cust_name = c_cust_n.text_input("Tên khách hàng (*)", value=pre_name, placeholder="Nhập tên khách")
@@ -2757,42 +3531,86 @@ def render_booking_management():
                     if st.form_submit_button("Tạo Booking Khách sạn", type="primary"):
                         if h_name and len(dates) == 2 and cust_name:
                             cust_info = f"{cust_name} - {cust_phone}" if cust_phone else cust_name
-                            nights = (dates[1] - dates[0]).days
-                            d_range = f"{dates[0].strftime('%d/%m/%Y')} - {dates[1].strftime('%d/%m/%Y')} ({nights} đêm)"
+                            d_range = f"{dates[0].strftime('%d/%m/%Y')} - {dates[1].strftime('%d/%m/%Y')} ({nights} đêm, {room_count} phòng)"
                             save_customer_check(cust_name, cust_phone, current_user_name)
 
                             add_row_to_table('service_bookings', {
                                 'code': new_code, 'name': f"[KS] {h_name}", 'created_at': datetime.now().strftime("%Y-%m-%d"),
                                 'type': 'HOTEL', 'details': f"Lưu trú: {d_range}", 'customer_info': cust_info,
-                                'net_price': net_price_incl_tax,
+                                'net_price': total_net, # Storing TOTAL
                                 'tax_percent': tax_percent,
-                                'selling_price': selling_price,
-                                'profit': profit,
+                                'selling_price': total_sell, # Storing TOTAL
+                                'profit': total_profit,
                                 'sale_name': current_user_name
                             })
+                            # Clear inputs
+                            if "bk_hotel_net_val" in st.session_state: del st.session_state.bk_hotel_net_val
+                            if "bk_hotel_sell_val" in st.session_state: del st.session_state.bk_hotel_sell_val
                             st.success("Đã tạo!"); time.sleep(0.5); st.rerun()
                         else: st.warning("Vui lòng nhập tên khách sạn, tên khách hàng và chọn đủ ngày đi/về.")
 
             elif bk_type == "🚌 Vận chuyển":
-                trans_type = st.radio("Loại phương tiện:", ["Xe (Ô tô)", "Máy bay", "Tàu hỏa"], horizontal=True)
+                trans_type = st.radio("Loại phương tiện:", ["Xe (Ô tô)", "Máy bay", "Tàu hỏa", "Du thuyền"], horizontal=True)
                 
                 st.divider()
                 st.markdown("##### 💰 Thông tin tài chính")
-                f1, f2 = st.columns(2)
-                net_price = f1.number_input("Giá nét", min_value=0.0, format="%.0f", key="trans_net")
-                selling_price = f2.number_input("Giá bán", min_value=0.0, format="%.0f", key="trans_sell")
+                
+                c_qty, c_net, c_sell = st.columns(3)
+                qty = c_qty.number_input("Số lượng (Vé/Khách)", min_value=1, value=1, key="trans_qty")
+                
+                # [CODE MỚI] Xử lý nhập tiền có định dạng cho Vận chuyển
+                if "bk_trans_net_val" not in st.session_state: st.session_state.bk_trans_net_val = ""
+                if "bk_trans_sell_val" not in st.session_state: st.session_state.bk_trans_sell_val = ""
+
+                def fmt_trans_net():
+                    val = st.session_state.bk_trans_net_val
+                    try:
+                        v_float = float(val.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                        st.session_state.bk_trans_net_val = "{:,.0f}".format(v_float).replace(",", ".") + " VND"
+                    except: pass
+                
+                def fmt_trans_sell():
+                    val = st.session_state.bk_trans_sell_val
+                    try:
+                        v_float = float(val.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                        st.session_state.bk_trans_sell_val = "{:,.0f}".format(v_float).replace(",", ".") + " VND"
+                    except: pass
+
+                net_price_input = c_net.text_input("Giá nét / vé", key="bk_trans_net_val", on_change=fmt_trans_net, help="Nhập số tiền (VD: 1000000)")
+                selling_price_input = c_sell.text_input("Giá bán / vé", key="bk_trans_sell_val", on_change=fmt_trans_sell, help="Nhập số tiền (VD: 1500000)")
+                
+                try: net_price_unit = float(net_price_input.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                except: net_price_unit = 0.0
+                
+                try: selling_price_unit = float(selling_price_input.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                except: selling_price_unit = 0.0
                 
                 tax_option = st.radio("Giá nét đã bao gồm thuế?", ["Đã bao gồm thuế", "Chưa bao gồm thuế"], horizontal=True, key="trans_tax_opt")
                 tax_percent = 0.0
-                net_price_incl_tax = net_price
                 
                 if tax_option == "Chưa bao gồm thuế":
                     tax_percent = st.number_input("Nhập % Thuế", min_value=0.0, max_value=100.0, step=0.5, format="%.1f", key="trans_tax_pct")
-                    net_price_incl_tax = net_price * (1 + tax_percent / 100)
-                    st.info(f"Giá nét bao gồm thuế: **{format_vnd(net_price_incl_tax)}**")
+                
+                # Calculations
+                net_price_unit_incl_tax = net_price_unit * (1 + tax_percent / 100)
+                total_net = net_price_unit_incl_tax * qty
+                total_sell = selling_price_unit * qty
+                profit = total_sell - total_net
 
-                profit = selling_price - net_price_incl_tax
-                st.metric("Lợi nhuận dự kiến", f"{format_vnd(profit)} VND")
+                # Display Table
+                st.markdown("###### 📊 Bảng tính chi tiết")
+                calc_df = pd.DataFrame({
+                    "Loại": ["Giá Nét (Vốn)", "Giá Bán (Doanh thu)"],
+                    "Đơn giá": [format_vnd(net_price_unit_incl_tax) + " VND", format_vnd(selling_price_unit) + " VND"],
+                    "Số lượng": [qty, qty],
+                    "Thành tiền": [format_vnd(total_net) + " VND", format_vnd(total_sell) + " VND"]
+                })
+                st.dataframe(calc_df, use_container_width=True, hide_index=True)
+
+                st.markdown(f"""<div style="background-color: #e8f5e9; padding: 10px; border-radius: 5px; border: 1px solid #c8e6c9; text-align: center;">
+                    <span style="color: #2e7d32; font-weight: bold; font-size: 1.1em;">LỢI NHUẬN DỰ KIẾN: {format_vnd(profit)} VND</span>
+                </div>""", unsafe_allow_html=True)
+
                 st.divider()
                 st.text_input("Sales phụ trách", value=current_user_name, disabled=True, key="trans_sale")
                 with st.form("bk_trans", clear_on_submit=True):
@@ -2812,7 +3630,7 @@ def render_booking_management():
                         if route_from and route_to:
                             is_valid = True
                             bk_name = f"[XE] {route_from} - {route_to}"
-                            details = f"Xe {car_type}: {car_no} | Ngày: {t_date.strftime('%d/%m/%Y')}"
+                            details = f"Xe {car_type}: {car_no} | Ngày: {t_date.strftime('%d/%m/%Y')} | SL: {qty}"
 
                     elif trans_type == "Máy bay":
                         c1, c2 = st.columns(2)
@@ -2824,7 +3642,7 @@ def render_booking_management():
                             is_valid = True
                             desc = flight_route if flight_route else ticket_code
                             bk_name = f"[BAY] {desc}"
-                            details = f"Vé: {ticket_code} | Ngày: {flight_date.strftime('%d/%m/%Y')}"
+                            details = f"Vé: {ticket_code} | Ngày: {flight_date.strftime('%d/%m/%Y')} | SL: {qty}"
 
                     elif trans_type == "Tàu hỏa":
                         c1, c2 = st.columns(2)
@@ -2836,7 +3654,18 @@ def render_booking_management():
                             is_valid = True
                             desc = train_route if train_route else ticket_code
                             bk_name = f"[TAU] {desc}"
-                            details = f"Vé: {ticket_code} | Ngày: {train_date.strftime('%d/%m/%Y')}"
+                            details = f"Vé: {ticket_code} | Ngày: {train_date.strftime('%d/%m/%Y')} | SL: {qty}"
+
+                    elif trans_type == "Du thuyền":
+                        c1, c2 = st.columns(2)
+                        cruise_name = c1.text_input("Tên du thuyền / Tuyến")
+                        cruise_date = c2.date_input("Ngày đi", format="DD/MM/YYYY")
+                        cabin_type = st.text_input("Loại Cabin / Ghi chú", placeholder="VD: Junior Suite, Balcony...")
+                        
+                        if cruise_name:
+                            is_valid = True
+                            bk_name = f"[THUYEN] {cruise_name}"
+                            details = f"Cabin: {cabin_type} | Ngày: {cruise_date.strftime('%d/%m/%Y')} | SL: {qty}"
 
                     st.divider()
                     c_cust_n, c_cust_p = st.columns(2)
@@ -2852,11 +3681,14 @@ def render_booking_management():
                             add_row_to_table('service_bookings', {
                                 'code': new_code, 'name': bk_name, 'created_at': datetime.now().strftime("%Y-%m-%d"),
                                 'type': 'TRANS', 'details': details, 'customer_info': cust_info,
-                                'net_price': net_price_incl_tax,
+                                'net_price': total_net,
                                 'tax_percent': tax_percent,
-                                'selling_price': selling_price, 'profit': profit,
+                                'selling_price': total_sell, 'profit': profit,
                                 'sale_name': current_user_name
                             })
+                            # Clear inputs
+                            if "bk_trans_net_val" in st.session_state: del st.session_state.bk_trans_net_val
+                            if "bk_trans_sell_val" in st.session_state: del st.session_state.bk_trans_sell_val
                             st.success("Đã tạo!"); time.sleep(0.5); st.rerun()
                         else: st.warning("Vui lòng nhập đủ thông tin (Hành trình/Mã vé và Tên khách).")
 
@@ -2868,14 +3700,20 @@ def render_booking_management():
                     sub_type = st.selectbox("Loại", ["Khách sạn", "Vận chuyển", "Khác"], key="cb_sub")
                     if sub_type == "Khách sạn":
                         sh_n = st.text_input("Tên KS", key="cb_h_n")
-                        sh_d = st.date_input("Ngày ở", [], key="cb_h_d", format="DD/MM/YYYY")
+                        c_qty, c_date = st.columns([1, 2])
+                        sh_qty = c_qty.number_input("Số lượng phòng", min_value=1, value=1, key="cb_h_q")
+                        sh_d = c_date.date_input("Ngày ở", [], key="cb_h_d", format="DD/MM/YYYY")
                         if st.button("Thêm KS") and sh_n and len(sh_d)==2:
-                            st.session_state.combo_list.append(f"🏨 {sh_n} ({sh_d[0].strftime('%d/%m')} - {sh_d[1].strftime('%d/%m')})"); st.rerun()
+                            st.session_state.combo_list.append(f"🏨 {sh_n} - {sh_qty} phòng ({sh_d[0].strftime('%d/%m')} - {sh_d[1].strftime('%d/%m')})"); st.rerun()
                     elif sub_type == "Vận chuyển":
-                        st_r = st.text_input("Hành trình", key="cb_t_r")
+                        tr_mode = st.selectbox("Loại phương tiện", ["Xe", "Máy bay", "Tàu hỏa", "Du thuyền"], key="cb_tr_mode")
+                        st_r = st.text_input("Hành trình / Mã vé / Tên tàu", key="cb_t_r")
                         st_d = st.date_input("Ngày", key="cb_t_d", format="DD/MM/YYYY")
-                        if st.button("Thêm Xe") and st_r:
-                            st.session_state.combo_list.append(f"🚌 {st_r} ({st_d.strftime('%d/%m')})"); st.rerun()
+                        
+                        icon_map = {"Xe": "🚌", "Máy bay": "✈️", "Tàu hỏa": "🚆", "Du thuyền": "🚢"}
+                        
+                        if st.button("Thêm Vận chuyển") and st_r:
+                            st.session_state.combo_list.append(f"{icon_map[tr_mode]} {st_r} ({st_d.strftime('%d/%m')})"); st.rerun()
                     else:
                         so_n = st.text_input("Tên dịch vụ", key="cb_o_n")
                         if st.button("Thêm DV") and so_n:
@@ -2887,21 +3725,63 @@ def render_booking_management():
                 
                 st.divider()
                 st.markdown("##### 💰 Thông tin tài chính")
-                f1, f2 = st.columns(2)
-                net_price = f1.number_input("Giá nét", min_value=0.0, format="%.0f", key="combo_net")
-                selling_price = f2.number_input("Giá bán", min_value=0.0, format="%.0f", key="combo_sell")
+                
+                c_qty, c_net, c_sell = st.columns(3)
+                qty = c_qty.number_input("Số lượng (Combo/Pax)", min_value=1, value=1, key="combo_qty")
+                
+                # [CODE MỚI] Xử lý nhập tiền có định dạng cho Combo
+                if "bk_combo_net_val" not in st.session_state: st.session_state.bk_combo_net_val = ""
+                if "bk_combo_sell_val" not in st.session_state: st.session_state.bk_combo_sell_val = ""
+
+                def fmt_combo_net():
+                    val = st.session_state.bk_combo_net_val
+                    try:
+                        v_float = float(val.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                        st.session_state.bk_combo_net_val = "{:,.0f}".format(v_float).replace(",", ".") + " VND"
+                    except: pass
+                
+                def fmt_combo_sell():
+                    val = st.session_state.bk_combo_sell_val
+                    try:
+                        v_float = float(val.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                        st.session_state.bk_combo_sell_val = "{:,.0f}".format(v_float).replace(",", ".") + " VND"
+                    except: pass
+
+                net_price_input = c_net.text_input("Giá nét / combo", key="bk_combo_net_val", on_change=fmt_combo_net, help="Nhập số tiền (VD: 1000000)")
+                selling_price_input = c_sell.text_input("Giá bán / combo", key="bk_combo_sell_val", on_change=fmt_combo_sell, help="Nhập số tiền (VD: 1500000)")
+                
+                try: net_price_unit = float(net_price_input.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                except: net_price_unit = 0.0
+                
+                try: selling_price_unit = float(selling_price_input.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                except: selling_price_unit = 0.0
                 
                 tax_option = st.radio("Giá nét đã bao gồm thuế?", ["Đã bao gồm thuế", "Chưa bao gồm thuế"], horizontal=True, key="combo_tax_opt")
                 tax_percent = 0.0
-                net_price_incl_tax = net_price
                 
                 if tax_option == "Chưa bao gồm thuế":
                     tax_percent = st.number_input("Nhập % Thuế", min_value=0.0, max_value=100.0, step=0.5, format="%.1f", key="combo_tax_pct")
-                    net_price_incl_tax = net_price * (1 + tax_percent / 100)
-                    st.info(f"Giá nét bao gồm thuế: **{format_vnd(net_price_incl_tax)}**")
+                
+                # Calculations
+                net_price_unit_incl_tax = net_price_unit * (1 + tax_percent / 100)
+                total_net = net_price_unit_incl_tax * qty
+                total_sell = selling_price_unit * qty
+                profit = total_sell - total_net
 
-                profit = selling_price - net_price_incl_tax
-                st.metric("Lợi nhuận dự kiến", f"{format_vnd(profit)} VND")
+                # Display Table
+                st.markdown("###### 📊 Bảng tính chi tiết")
+                calc_df = pd.DataFrame({
+                    "Loại": ["Giá Nét (Vốn)", "Giá Bán (Doanh thu)"],
+                    "Đơn giá": [format_vnd(net_price_unit_incl_tax) + " VND", format_vnd(selling_price_unit) + " VND"],
+                    "Số lượng": [qty, qty],
+                    "Thành tiền": [format_vnd(total_net) + " VND", format_vnd(total_sell) + " VND"]
+                })
+                st.dataframe(calc_df, use_container_width=True, hide_index=True)
+
+                st.markdown(f"""<div style="background-color: #e8f5e9; padding: 10px; border-radius: 5px; border: 1px solid #c8e6c9; text-align: center;">
+                    <span style="color: #2e7d32; font-weight: bold; font-size: 1.1em;">LỢI NHUẬN DỰ KIẾN: {format_vnd(profit)} VND</span>
+                </div>""", unsafe_allow_html=True)
+
                 st.divider()
                 st.text_input("Sales phụ trách", value=current_user_name, disabled=True, key="combo_sale")
                 with st.form("bk_combo", clear_on_submit=True):
@@ -2915,34 +3795,79 @@ def render_booking_management():
                         if combo_name and st.session_state.combo_list and cust_name:
                             cust_info = f"{cust_name} - {cust_phone}" if cust_phone else cust_name
                             save_customer_check(cust_name, cust_phone, current_user_name)
+                            details_str = " | ".join(st.session_state.combo_list) + f" (SL: {qty})"
                             add_row_to_table('service_bookings', {
                                 'code': new_code, 'name': f"[CB] {combo_name}", 'created_at': datetime.now().strftime("%Y-%m-%d"),
-                                'type': 'COMBO', 'details': " | ".join(st.session_state.combo_list), 'customer_info': cust_info,
-                                'net_price': net_price_incl_tax,
+                                'type': 'COMBO', 'details': details_str, 'customer_info': cust_info,
+                                'net_price': total_net,
                                 'tax_percent': tax_percent,
-                                'selling_price': selling_price, 'profit': profit,
+                                'selling_price': total_sell, 'profit': profit,
                                 'sale_name': current_user_name
                             })
+                            # Clear inputs
+                            if "bk_combo_net_val" in st.session_state: del st.session_state.bk_combo_net_val
+                            if "bk_combo_sell_val" in st.session_state: del st.session_state.bk_combo_sell_val
                             st.session_state.combo_list = []; st.success("Đã tạo!"); time.sleep(0.5); st.rerun()
                         else: st.warning("Cần tên Combo, tên khách hàng và ít nhất 1 dịch vụ.")
 
             else:
                 st.markdown("##### 💰 Thông tin tài chính")
-                f1, f2 = st.columns(2)
-                net_price = f1.number_input("Giá nét", min_value=0.0, format="%.0f", key="other_net")
-                selling_price = f2.number_input("Giá bán", min_value=0.0, format="%.0f", key="other_sell")
+                c_qty, c_net, c_sell = st.columns(3)
+                qty = c_qty.number_input("Số lượng", min_value=1, value=1, key="other_qty")
+                
+                # [CODE MỚI] Xử lý nhập tiền có định dạng cho Khác
+                if "bk_other_net_val" not in st.session_state: st.session_state.bk_other_net_val = ""
+                if "bk_other_sell_val" not in st.session_state: st.session_state.bk_other_sell_val = ""
+
+                def fmt_other_net():
+                    val = st.session_state.bk_other_net_val
+                    try:
+                        v_float = float(val.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                        st.session_state.bk_other_net_val = "{:,.0f}".format(v_float).replace(",", ".") + " VND"
+                    except: pass
+                
+                def fmt_other_sell():
+                    val = st.session_state.bk_other_sell_val
+                    try:
+                        v_float = float(val.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                        st.session_state.bk_other_sell_val = "{:,.0f}".format(v_float).replace(",", ".") + " VND"
+                    except: pass
+
+                net_price_input = c_net.text_input("Giá nét / đơn vị", key="bk_other_net_val", on_change=fmt_other_net, help="Nhập số tiền (VD: 1000000)")
+                selling_price_input = c_sell.text_input("Giá bán / đơn vị", key="bk_other_sell_val", on_change=fmt_other_sell, help="Nhập số tiền (VD: 1500000)")
+                
+                try: net_price_unit = float(net_price_input.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                except: net_price_unit = 0.0
+                
+                try: selling_price_unit = float(selling_price_input.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                except: selling_price_unit = 0.0
                 
                 tax_option = st.radio("Giá nét đã bao gồm thuế?", ["Đã bao gồm thuế", "Chưa bao gồm thuế"], horizontal=True, key="other_tax_opt")
                 tax_percent = 0.0
-                net_price_incl_tax = net_price
                 
                 if tax_option == "Chưa bao gồm thuế":
                     tax_percent = st.number_input("Nhập % Thuế", min_value=0.0, max_value=100.0, step=0.5, format="%.1f", key="other_tax_pct")
-                    net_price_incl_tax = net_price * (1 + tax_percent / 100)
-                    st.info(f"Giá nét bao gồm thuế: **{format_vnd(net_price_incl_tax)}**")
+                
+                # Calculations
+                net_price_unit_incl_tax = net_price_unit * (1 + tax_percent / 100)
+                total_net = net_price_unit_incl_tax * qty
+                total_sell = selling_price_unit * qty
+                profit = total_sell - total_net
 
-                profit = selling_price - net_price_incl_tax
-                st.metric("Lợi nhuận dự kiến", f"{format_vnd(profit)} VND")
+                # Display Table
+                st.markdown("###### 📊 Bảng tính chi tiết")
+                calc_df = pd.DataFrame({
+                    "Loại": ["Giá Nét (Vốn)", "Giá Bán (Doanh thu)"],
+                    "Đơn giá": [format_vnd(net_price_unit_incl_tax) + " VND", format_vnd(selling_price_unit) + " VND"],
+                    "Số lượng": [qty, qty],
+                    "Thành tiền": [format_vnd(total_net) + " VND", format_vnd(total_sell) + " VND"]
+                })
+                st.dataframe(calc_df, use_container_width=True, hide_index=True)
+
+                st.markdown(f"""<div style="background-color: #e8f5e9; padding: 10px; border-radius: 5px; border: 1px solid #c8e6c9; text-align: center;">
+                    <span style="color: #2e7d32; font-weight: bold; font-size: 1.1em;">LỢI NHUẬN DỰ KIẾN: {format_vnd(profit)} VND</span>
+                </div>""", unsafe_allow_html=True)
+
                 st.divider()
                 st.text_input("Sales phụ trách", value=current_user_name, disabled=True, key="other_sale")
                 with st.form("bk_other", clear_on_submit=True):
@@ -2961,12 +3886,15 @@ def render_booking_management():
                             save_customer_check(cust_name, cust_phone, current_user_name)
                             add_row_to_table('service_bookings', {
                                 'code': new_code, 'name': new_name, 'created_at': datetime.now().strftime("%Y-%m-%d"),
-                                'type': 'OTHER', 'customer_info': cust_info,
-                                'net_price': net_price_incl_tax,
+                                'type': 'OTHER', 'customer_info': cust_info, 'details': f"SL: {qty}",
+                                'net_price': total_net,
                                 'tax_percent': tax_percent,
-                                'selling_price': selling_price, 'profit': profit,
+                                'selling_price': total_sell, 'profit': profit,
                                 'sale_name': current_user_name
                             })
+                            # Clear inputs
+                            if "bk_other_net_val" in st.session_state: del st.session_state.bk_other_net_val
+                            if "bk_other_sell_val" in st.session_state: del st.session_state.bk_other_sell_val
                             st.success("Đã tạo!"); time.sleep(0.5); st.rerun()
                         else: st.warning("Vui lòng nhập tên dịch vụ và tên khách hàng.")
 
@@ -3009,6 +3937,18 @@ def render_booking_management():
                 
                 # Gọi hàm hiển thị so sánh
                 render_cost_comparison(code)
+                
+                # --- NÚT TẢI BOOKING CONFIRMATION (MỚI) ---
+                st.write("")
+                comp_data_cfm = get_company_data()
+                pdf_cfm = create_booking_cfm_pdf(dict(bk_info), comp_data_cfm)
+                st.download_button(
+                    label="📥 Tải Booking Confirmation (PDF)",
+                    data=pdf_cfm,
+                    file_name=f"Booking_CFM_{code}.pdf",
+                    mime="application/pdf",
+                    type="secondary"
+                )
                 
                 st.divider()
                 # Nút hoàn tất & xóa booking
@@ -3496,7 +4436,7 @@ def render_tour_management():
                         
                         worksheet.write('B1', comp['name'], company_name_fmt)
                         worksheet.write('B2', f"ĐC: {comp['address']}", company_info_fmt)
-                        worksheet.write('B3', f"SĐT: {comp['phone']}", company_info_fmt)
+                        worksheet.write('B3', f"MST: {comp['phone']}", company_info_fmt)
                         
                         # --- 2. TOUR INFO (Rows 4-9) ---
                         worksheet.merge_range('A5:G5', "BẢNG DỰ TOÁN CHI PHÍ TOUR", title_fmt)
@@ -4097,7 +5037,7 @@ def render_tour_management():
                     # --- XUẤT FILE TỔNG HỢP (BÀN GIAO + THỰC ĐƠN) ---
                     buffer_combined = io.BytesIO()
                     with pd.ExcelWriter(buffer_combined, engine='xlsxwriter') as writer:
-                        workbook = writer.book
+                        workbook: Any = writer.book
                         # ws = workbook.add_worksheet("ThucDon")
                         
                         # Formats
@@ -4490,7 +5430,7 @@ def render_tour_management():
                         comp_data = get_company_data()
                         ws_menu.write('A1', comp_data['name'], fmt_comp_menu)
                         ws_menu.write('A2', f"ĐC: {comp_data['address']}", fmt_info_menu)
-                        ws_menu.write('A3', f"SĐT: {comp_data['phone']}", fmt_info_menu)
+                        ws_menu.write('A3', f"MST: {comp_data['phone']}", fmt_info_menu)
                         
                         # Title
                         ws_menu.merge_range('A5:C5', f"DANH SÁCH THỰC ĐƠN TOUR: {tour_info_ls['tour_name']}", fmt_title_menu)
@@ -4885,12 +5825,12 @@ def render_tour_management():
                     
                     worksheet.write('B1', comp['name'], company_name_fmt)
                     worksheet.write('B2', f"ĐC: {comp['address']}", company_info_fmt)
-                    worksheet.write('B3', f"SĐT: {comp['phone']}", company_info_fmt)
+                    worksheet.write('B3', f"MST: {comp['phone']}", company_info_fmt)
                     
                     # 2. Tour Info
                     worksheet.merge_range('A5:I5', "BẢNG QUYẾT TOÁN CHI PHÍ TOUR", title_fmt)
                     
-                    t_info_dict = dict(zip(tour_info_act.keys(), tour_info_act))
+                    t_info_dict = {k: tour_info_act[k] for k in tour_info_act.keys()}
                     worksheet.write('A7', "Tên đoàn:", sum_label_fmt)
                     worksheet.merge_range('B7:D7', t_info_dict.get('tour_name',''), sum_val_fmt)
                     worksheet.write('E7', "Mã đoàn:", sum_label_fmt)
@@ -5228,7 +6168,7 @@ def render_tour_management():
             buffer_rpt = io.BytesIO()
             with pd.ExcelWriter(buffer_rpt, engine='xlsxwriter') as writer:
                 df_export.to_excel(writer, index=False, sheet_name='Report')
-                workbook = writer.book
+                workbook: Any = writer.book
                 worksheet = writer.sheets['Report']
                 
                 # Định dạng
@@ -5572,12 +6512,14 @@ def main():
         <div class="company-info-text">
             <h1>{comp['name']}</h1>
             <p>📍 {comp['address']}</p>
-            <p>📞 {comp['phone']}</p>
+            <p>MST: {comp['phone']}</p>
         </div>
     </div>
     ''', unsafe_allow_html=True)
 
-    if module == "💰 Kiểm Soát Chi Phí":
+    if module == "🏠 Trang Chủ":
+        render_dashboard()
+    elif module == "💰 Kiểm Soát Chi Phí":
         render_cost_control(menu)
     elif module == "💳 Quản Lý Công Nợ":
         render_debt_management()
