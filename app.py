@@ -1591,24 +1591,50 @@ def create_voucher_pdf(voucher_data):
     c = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
     
-    # Cấu hình Font
-    font_name = 'Helvetica' # Fallback
+    # --- SỬA LỖI FONT TIẾNG VIỆT TRÊN STREAMLIT CLOUD ---
+    font_name = 'Helvetica' # Fallback mặc định
     font_name_bold = 'Helvetica-Bold'
-    try:
-        font_path = r"C:\Windows\Fonts\times.ttf"
-        font_path_bd = r"C:\Windows\Fonts\timesbd.ttf"
-        if os.path.exists(font_path) and os.path.exists(font_path_bd):
-            pdfmetrics.registerFont(TTFont('TimesNewRoman', font_path))
-            pdfmetrics.registerFont(TTFont('TimesNewRoman-Bold', font_path_bd))
-            font_name = 'TimesNewRoman'
-            font_name_bold = 'TimesNewRoman-Bold'
-        else:
-            font_path = r"C:\Windows\Fonts\arial.ttf"
-            if os.path.exists(font_path):
-                pdfmetrics.registerFont(TTFont('Arial', font_path))
-                font_name = 'Arial'
-                font_name_bold = 'Arial'
-    except: pass
+    
+    # Danh sách các cặp file font (Thường, Đậm) ưu tiên tìm kiếm
+    # Bạn phải upload các file .ttf này lên cùng thư mục với app.py trên Streamlit Cloud
+    font_candidates = [
+        ("times.ttf", "timesbd.ttf", "TimesNewRoman"),  # Ưu tiên 1
+        ("arial.ttf", "arialbd.ttf", "Arial"),          # Ưu tiên 2
+        ("Roboto-Regular.ttf", "Roboto-Bold.ttf", "Roboto") # Ưu tiên 3 (Nếu dùng Google Fonts)
+    ]
+    
+    font_registered = False
+
+    # 1. Thử tìm font trong thư mục hiện tại (Dành cho Streamlit Cloud)
+    for regular, bold, name in font_candidates:
+        if os.path.exists(regular) and os.path.exists(bold):
+            try:
+                pdfmetrics.registerFont(TTFont(name, regular))
+                pdfmetrics.registerFont(TTFont(f'{name}-Bold', bold))
+                font_name = name
+                font_name_bold = f'{name}-Bold'
+                font_registered = True
+                break
+            except: pass
+
+    # 2. Nếu chưa tìm thấy, thử tìm trong Windows (Dành cho chạy Local)
+    if not font_registered:
+        try:
+            win_path = r"C:\Windows\Fonts\times.ttf"
+            win_path_bd = r"C:\Windows\Fonts\timesbd.ttf"
+            if os.path.exists(win_path) and os.path.exists(win_path_bd):
+                pdfmetrics.registerFont(TTFont('TimesNewRoman', win_path))
+                pdfmetrics.registerFont(TTFont('TimesNewRoman-Bold', win_path_bd))
+                font_name = 'TimesNewRoman'
+                font_name_bold = 'TimesNewRoman-Bold'
+            else:
+                # Fallback Arial trên Windows
+                win_arial = r"C:\Windows\Fonts\arial.ttf"
+                if os.path.exists(win_arial):
+                    pdfmetrics.registerFont(TTFont('Arial', win_arial))
+                    font_name = 'Arial'
+                    font_name_bold = 'Arial' # Arial thường không tách file bold rõ trong logic đơn giản
+        except: pass
 
     comp = get_company_data()
     
@@ -1816,25 +1842,27 @@ def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
 
     draw_watermark()
 
-    # --- CẤU HÌNH FONT (Tương tự create_voucher_pdf) ---
+    # --- CẤU HÌNH FONT (SỬA LẠI ĐỂ CHẠY TRÊN CLOUD) ---
     font_name = 'Helvetica'
     font_bold = 'Helvetica-Bold'
-    try:
-        font_path = r"C:\Windows\Fonts\times.ttf"
-        font_path_bd = r"C:\Windows\Fonts\timesbd.ttf"
-        if os.path.exists(font_path) and os.path.exists(font_path_bd):
-            pdfmetrics.registerFont(TTFont('TimesNewRoman', font_path))
-            pdfmetrics.registerFont(TTFont('TimesNewRoman-Bold', font_path_bd))
+    
+    # 1. Ưu tiên tìm font ngay tại thư mục gốc (Streamlit Cloud)
+    # Upload file times.ttf và timesbd.ttf lên github cùng app.py
+    if os.path.exists("times.ttf") and os.path.exists("timesbd.ttf"):
+        try:
+            pdfmetrics.registerFont(TTFont('TimesNewRoman', "times.ttf"))
+            pdfmetrics.registerFont(TTFont('TimesNewRoman-Bold', "timesbd.ttf"))
             font_name = 'TimesNewRoman'
             font_bold = 'TimesNewRoman-Bold'
-        else:
-            # Fallback cho Arial nếu không có Times
-            font_path_arial = r"C:\Windows\Fonts\arial.ttf"
-            if os.path.exists(font_path_arial):
-                pdfmetrics.registerFont(TTFont('Arial', font_path_arial))
-                font_name = 'Arial'
-                font_bold = 'Arial' # Arial thường không tách file bold rõ ràng trong code đơn giản
-    except: pass
+        except: pass
+    # 2. Fallback cho Windows Local
+    elif os.path.exists(r"C:\Windows\Fonts\times.ttf"):
+        try:
+            pdfmetrics.registerFont(TTFont('TimesNewRoman', r"C:\Windows\Fonts\times.ttf"))
+            pdfmetrics.registerFont(TTFont('TimesNewRoman-Bold', r"C:\Windows\Fonts\timesbd.ttf"))
+            font_name = 'TimesNewRoman'
+            font_bold = 'TimesNewRoman-Bold'
+        except: pass
 
     # --- MÀU SẮC ---
     primary_color = "#1B5E20" # Xanh đậm thương hiệu
