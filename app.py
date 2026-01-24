@@ -358,6 +358,18 @@ def migrate_db_columns():
     try: c.execute("ALTER TABLE tour_sightseeings ADD COLUMN deposit REAL DEFAULT 0")
     except: pass
 
+    # --- Cập nhật cho Payment Reminders (Mới) ---
+    try: c.execute("ALTER TABLE payment_reminders ADD COLUMN cc_email TEXT")
+    except: pass
+    try: c.execute("ALTER TABLE payment_reminders ADD COLUMN sender_name TEXT")
+    except: pass
+    try: c.execute("ALTER TABLE payment_reminders ADD COLUMN bank_name TEXT")
+    except: pass
+    try: c.execute("ALTER TABLE payment_reminders ADD COLUMN bank_account TEXT")
+    except: pass
+    try: c.execute("ALTER TABLE payment_reminders ADD COLUMN bank_holder TEXT")
+    except: pass
+
     # --- Bảng Lịch Trình Tour (Mới) ---
     try: c.execute('''CREATE TABLE IF NOT EXISTS tour_itineraries (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -743,7 +755,7 @@ def update_company_info(name, address, phone, logo_bytes=None):
     get_company_data.clear()# type: ignore
 
 # --- HÀM GỬI EMAIL ---
-def send_email_notification(to_email, subject, body_html):
+def send_email_notification(to_email, subject, body_html, cc_emails=None):
     """Hàm gửi email qua SMTP Gmail"""
     try:
         # Lấy cấu hình từ secrets.toml
@@ -754,12 +766,23 @@ def send_email_notification(to_email, subject, body_html):
         msg['From'] = f"Bali Tourist System <{email_sender}>"
         msg['To'] = to_email
         msg['Subject'] = subject
+        if cc_emails:
+            msg['Cc'] = cc_emails
         msg.attach(MIMEText(body_html, 'html'))
 
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
         server.login(email_sender, email_password)
-        server.send_message(msg)
+        
+        # Xử lý danh sách người nhận (To + Cc)
+        recipients = [to_email]
+        if cc_emails:
+            if isinstance(cc_emails, str):
+                recipients.extend([e.strip() for e in cc_emails.split(',') if e.strip()])
+            elif isinstance(cc_emails, list):
+                recipients.extend(cc_emails)
+        
+        server.send_message(msg, to_addrs=recipients)
         server.quit()
         return True, "Đã gửi mail thành công!"
     except Exception as e:
@@ -768,14 +791,41 @@ def send_email_notification(to_email, subject, body_html):
 # --- HÀM TỰ ĐỘNG QUÉT & GỬI LẦN 2 ---
 def check_and_send_due_reminders():
     """Kiểm tra các lịch hẹn đến ngày hôm nay để gửi email lần 2"""
-    today_str = datetime.now().strftime('%Y-%m-%d')
+    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     # Tìm các nhắc hẹn có ngày = hôm nay (hoặc quá khứ) VÀ mới chỉ gửi lần 1 ('sent_1')
-    reminders = run_query("SELECT * FROM payment_reminders WHERE status='sent_1' AND due_date <= ?", (today_str,))
+    reminders = run_query("SELECT * FROM payment_reminders WHERE status='sent_1' AND due_date <= ?", (now_str,))
     
     count = 0
     if reminders:
-        for r in reminders:
+        for row in reminders:
+            r = dict(row)
             # Gửi email lần 2
+            cc = r.get('cc_email', '')
+            sender = r.get('sender_name', 'Bali Tourist System')
+            
+            # [FIX] Format ngày hiển thị trong mail (DD/MM/YYYY HH:MM)
+            try:
+                d_obj = datetime.strptime(r['due_date'], '%Y-%m-%d %H:%M:%S')
+                date_display = d_obj.strftime('%H:%M %d/%m/%Y')
+            except:
+                try:
+                    d_obj = datetime.strptime(r['due_date'], '%Y-%m-%d')
+                    date_display = d_obj.strftime('%d/%m/%Y')
+                except:
+                    date_display = r['due_date']
+
+            # [NEW] Bank Info for Automated Email
+            bank_info_html = ""
+            if r.get('bank_name') and r.get('bank_account'):
+                bank_info_html = f"""
+                <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 15px 0;">
+                    <h4 style="margin-top: 0;">🏦 THÔNG TIN CHUYỂN KHOẢN</h4>
+                    <p><strong>Ngân hàng:</strong> {r['bank_name']}</p>
+                    <p><strong>Số tài khoản:</strong> {r['bank_account']}</p>
+                    <p><strong>Chủ tài khoản:</strong> {r.get('bank_holder', '')}</p>
+                </div>
+                """
+
             subject = f"🔔 [NHẮC HẸN LẦN 2] Thanh toán cho mã {r['ref_code']}"
             content = f"""
             <h3>🔔 NHẮC HẸN THANH TOÁN (LẦN 2)</h3>
@@ -785,11 +835,13 @@ def check_and_send_due_reminders():
                 <li><strong>Tên:</strong> {r['ref_name']}</li>
                 <li><strong>Số tiền:</strong> {format_vnd(r['amount'])} VND</li>
                 <li><strong>Nội dung:</strong> {r['content']}</li>
-                <li><strong>Ngày hẹn:</strong> {r['due_date']}</li>
+                <li><strong>Ngày hẹn:</strong> {date_display}</li>
             </ul>
+            {bank_info_html}
             <p>Vui lòng kiểm tra và xử lý.</p>
+            <p>Trân trọng,<br>{sender}</p>
             """
-            success, msg = send_email_notification(r['receiver_email'], subject, content)
+            success, msg = send_email_notification(r['receiver_email'], subject, content, cc_emails=cc)
             if success:
                 # Cập nhật trạng thái thành sent_2 (đã xong)
                 run_query("UPDATE payment_reminders SET status='sent_2' WHERE id=?", (r['id'],), commit=True)
@@ -2238,11 +2290,15 @@ def render_notification_calendar():
             
             if upcoming:
                 for item in upcoming:
-                    d_obj = datetime.strptime(item['due_date'], '%Y-%m-%d').date()
-                    days_left = (d_obj - datetime.now().date()).days
+                    try:
+                        d_obj = datetime.strptime(item['due_date'], '%Y-%m-%d %H:%M:%S')
+                    except:
+                        d_obj = datetime.strptime(item['due_date'], '%Y-%m-%d')
+                        
+                    days_left = (d_obj.date() - datetime.now().date()).days
                     
                     # Format ngày tháng năm
-                    date_display = d_obj.strftime('%d/%m/%Y')
+                    date_display = d_obj.strftime('%H:%M %d/%m/%Y')
                     lunar_display = convert_solar_to_lunar(d_obj).replace(" (Âm lịch)", "")
                     
                     color = "orange" if days_left == 0 else "green" if days_left > 0 else "red"
@@ -2267,14 +2323,30 @@ def render_notification_calendar():
         st.markdown("### ✍️ Tạo yêu cầu thanh toán mới")
         with st.container(border=True):
             # 1. Lấy dữ liệu Booking/Tour để liên kết
-            tours = run_query("SELECT tour_code, tour_name FROM tours WHERE status='running'")
-            bookings = run_query("SELECT code, name FROM service_bookings WHERE status='active'")
+            # [UPDATED] Phân quyền xem Booking/Tour
+            user_info = st.session_state.get("user_info", {})
+            u_role = user_info.get('role')
+            u_name = user_info.get('name')
+            
+            tour_q = "SELECT tour_code, tour_name FROM tours WHERE status='running'"
+            tour_p = []
+            bk_q = "SELECT code, name FROM service_bookings WHERE status='active'"
+            bk_p = []
+            
+            if u_role not in ['admin', 'admin_f1']:
+                tour_q += " AND sale_name=?"
+                tour_p.append(u_name)
+                bk_q += " AND sale_name=?"
+                bk_p.append(u_name)
+                
+            tours = run_query(tour_q, tuple(tour_p))
+            bookings = run_query(bk_q, tuple(bk_p))
             
             opts = ["-- Chọn mã liên kết --"]
             if tours: opts += [f"TOUR | {t['tour_code']} | {t['tour_name']}" for t in tours]
             if bookings: opts += [f"BOOK | {b['code']} | {b['name']}" for b in bookings]
             
-            sel_ref = st.selectbox("Liên kết với Booking/Tour:", opts)
+            sel_ref = st.selectbox("Liên kết với Booking/Tour:", opts, key="notif_ref")
             
             # Tự động điền thông tin nếu chọn mã
             ref_code = ""
@@ -2285,22 +2357,50 @@ def render_notification_calendar():
                 ref_name = parts[2]
 
             c1, c2 = st.columns(2)
-            amount = c1.number_input("Số tiền yêu cầu:", min_value=0.0, step=100000.0, format="%.0f")
             
-            # [CẬP NHẬT] Chọn ngày với format DD/MM/YYYY
-            due_date = c2.date_input("Ngày hẹn nhắc lại (Lần 2):", min_value=datetime.now(), format="DD/MM/YYYY")
+            # [CẬP NHẬT] Nhập số tiền có định dạng VND
+            if "req_amount_val" not in st.session_state: st.session_state.req_amount_val = ""
+            def fmt_req_amount():
+                val = st.session_state.req_amount_val
+                try:
+                    v_float = float(val.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                    st.session_state.req_amount_val = "{:,.0f}".format(v_float).replace(",", ".") + " VND"
+                except: pass
+
+            amount_input = c1.text_input("Số tiền yêu cầu:", key="req_amount_val", on_change=fmt_req_amount, help="Nhập số tiền (VD: 1000000)")
+            try: amount = float(amount_input.replace('.', '').replace(',', '').replace(' VND', '').strip())
+            except: amount = 0.0
+            
+            # [CẬP NHẬT] Chọn ngày và giờ với format DD/MM/YYYY
+            with c2:
+                c_d, c_t = st.columns(2)
+                due_date = c_d.date_input("Ngày hẹn (Lần 2):", min_value=datetime.now(), format="DD/MM/YYYY", key="notif_date")
+                due_time = c_t.time_input("Giờ hẹn:", value=datetime.now().time(), key="notif_time")
+                due_datetime = datetime.combine(due_date, due_time)
             
             # Hiển thị ngày Âm lịch tương ứng ngay dưới để tiện theo dõi
             if due_date:
                 st.caption(f"🗓️ Tương ứng Âm lịch: {convert_solar_to_lunar(due_date)}")
+            
+            # [CẬP NHẬT] Thông tin người gửi và CC
+            current_user_name = st.session_state.user_info.get('name', '')
+            sender_name = st.text_input("Người gửi (Hiển thị trong mail):", value=current_user_name, disabled=True)
+            cc_email = st.text_input("CC Email (cách nhau dấu phẩy):", placeholder="boss@gmail.com, ketoan@gmail.com", key="notif_cc")
             
             # Email mặc định lấy từ secrets
             def_email = ""
             try: def_email = st.secrets["email"].get("receiver_default", "")
             except: pass
             
-            receiver = st.text_input("Email người nhận thông báo:", value=def_email, help="Email của Kế toán hoặc Khách hàng")
-            content = st.text_area("Nội dung yêu cầu thanh toán:", height=100, placeholder="VD: Yêu cầu thanh toán đợt 1 cho đoàn...")
+            receiver = st.text_input("Email người nhận thông báo:", value=def_email, help="Email của Kế toán hoặc Khách hàng", key="notif_receiver")
+            content = st.text_area("Nội dung yêu cầu thanh toán:", height=100, placeholder="VD: Yêu cầu thanh toán đợt 1 cho đoàn...", key="notif_content")
+            
+            # [NEW] Bank Info Inputs
+            st.markdown("##### 🏦 Thông tin chuyển khoản")
+            c_b1, c_b2 = st.columns(2)
+            bank_name = c_b1.text_input("Tên Ngân Hàng", placeholder="VD: Techcombank", key="notif_bank_name")
+            bank_acc = c_b2.text_input("Số Tài Khoản", placeholder="VD: 1903...", key="notif_bank_acc")
+            bank_holder = st.text_input("Chủ Tài Khoản", placeholder="VD: NGUYEN VAN A", key="notif_bank_holder")
 
             st.info("ℹ️ **Cơ chế:** Khi bấm nút dưới, hệ thống sẽ **GỬI NGAY 1 EMAIL** cho người nhận. Đến ngày hẹn ở trên, hệ thống sẽ **GỬI TIẾP 1 EMAIL NỮA**.")
 
@@ -2308,6 +2408,17 @@ def render_notification_calendar():
                 if ref_code and receiver and content:
                     with st.spinner("Đang gửi email lần 1..."):
                         # 1. Gửi Email Lần 1 Ngay lập tức
+                        bank_html = ""
+                        if bank_name and bank_acc:
+                            bank_html = f"""
+                            <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 15px 0;">
+                                <h4 style="margin-top: 0;">🏦 THÔNG TIN CHUYỂN KHOẢN</h4>
+                                <p><strong>Ngân hàng:</strong> {bank_name}</p>
+                                <p><strong>Số tài khoản:</strong> {bank_acc}</p>
+                                <p><strong>Chủ tài khoản:</strong> {bank_holder}</p>
+                            </div>
+                            """
+
                         subj = f"📢 [THÔNG BÁO] Yêu cầu thanh toán - {ref_code}"
                         html_body = f"""
                         <h3>📢 YÊU CẦU THANH TOÁN (LẦN 1)</h3>
@@ -2315,20 +2426,26 @@ def render_notification_calendar():
                         <p>Chúng tôi gửi thông báo thanh toán cho dịch vụ <strong>{ref_name}</strong> (Mã: {ref_code}).</p>
                         <p><strong>Số tiền:</strong> {format_vnd(amount)} VND</p>
                         <p><strong>Nội dung:</strong> {content}</p>
-                        <p>Hệ thống sẽ gửi nhắc nhở lại vào ngày: <strong>{due_date.strftime('%d/%m/%Y')}</strong>.</p>
+                        {bank_html}
+                        <p>Hệ thống sẽ gửi nhắc nhở lại vào lúc: <strong>{due_datetime.strftime('%H:%M %d/%m/%Y')}</strong>.</p>
                         <hr>
-                        <small>Bali Tourist Automated System</small>
+                        <p>Trân trọng,<br><strong>{sender_name}</strong><br><small>Bali Tourist Automated System</small></p>
                         """
                         
-                        ok, msg = send_email_notification(receiver, subj, html_body)
+                        ok, msg = send_email_notification(receiver, subj, html_body, cc_emails=cc_email)
                         if ok:
                             # 2. Lưu vào DB để hẹn giờ gửi lần 2
                             run_query("""INSERT INTO payment_reminders 
-                                (ref_code, ref_name, amount, due_date, receiver_email, content, status, created_at)
-                                VALUES (?, ?, ?, ?, ?, ?, 'sent_1', ?)""", 
-                                (ref_code, ref_name, amount, due_date.strftime('%Y-%m-%d'), receiver, content, datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
+                                (ref_code, ref_name, amount, due_date, receiver_email, content, status, created_at, cc_email, sender_name, bank_name, bank_account, bank_holder)
+                                VALUES (?, ?, ?, ?, ?, ?, 'sent_1', ?, ?, ?, ?, ?, ?)""", 
+                                (ref_code, ref_name, amount, due_datetime.strftime('%Y-%m-%d %H:%M:%S'), receiver, content, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), cc_email, sender_name, bank_name, bank_acc, bank_holder),
                                 commit=True)
                             
+                            # [FIX] Reset form fields
+                            keys_to_reset = ["req_amount_val", "notif_receiver", "notif_content", "notif_bank_name", "notif_bank_acc", "notif_bank_holder", "notif_cc", "notif_date", "notif_time", "notif_ref"]
+                            for k in keys_to_reset:
+                                if k in st.session_state: del st.session_state[k]
+
                             st.success(f"✅ Đã gửi email lần 1 và lên lịch nhắc lần 2 vào ngày {due_date.strftime('%d/%m/%Y')}!"); time.sleep(1); st.rerun()
                         else: st.error(msg)
                 else:
@@ -4747,6 +4864,8 @@ def render_tour_management():
 
             # Prepare Display Data (Tạo bản sao để hiển thị format đẹp)
             df_display = st.session_state.est_df_temp.copy()
+            # [NEW] Tạo số thứ tự (STT) tự động
+            df_display.index = range(1, len(df_display) + 1)
             
             # [MODIFIED] Tính Giá/Pax và ẩn cột Times
             guest_cnt = tour_info['guest_count'] if tour_info['guest_count'] else 1 # type: ignore
@@ -4767,6 +4886,7 @@ def render_tour_management():
                 disabled=is_disabled,
                 num_rows="dynamic",
                 column_config={
+                    "_index": st.column_config.NumberColumn("STT", disabled=True),
                     "category": st.column_config.TextColumn("Hạng mục chi phí", required=False),
                     "description": st.column_config.TextColumn("Diễn giải"),
                     "unit": st.column_config.TextColumn("Đơn vị"),
@@ -4779,7 +4899,7 @@ def render_tour_management():
                 },
                 column_order=("category", "description", "unit", "unit_price", "quantity", "times", "price_per_pax", "total_display"),
                 use_container_width=True,
-                hide_index=True,
+                hide_index=False,
                 key=f"editor_est_{st.session_state.est_editor_key}"
             )
             
