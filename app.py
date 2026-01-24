@@ -1593,16 +1593,21 @@ def create_voucher_pdf(voucher_data):
     
     # Cấu hình Font
     font_name = 'Helvetica' # Fallback
+    font_name_bold = 'Helvetica-Bold'
     try:
         font_path = r"C:\Windows\Fonts\times.ttf"
-        if os.path.exists(font_path):
+        font_path_bd = r"C:\Windows\Fonts\timesbd.ttf"
+        if os.path.exists(font_path) and os.path.exists(font_path_bd):
             pdfmetrics.registerFont(TTFont('TimesNewRoman', font_path))
+            pdfmetrics.registerFont(TTFont('TimesNewRoman-Bold', font_path_bd))
             font_name = 'TimesNewRoman'
+            font_name_bold = 'TimesNewRoman-Bold'
         else:
             font_path = r"C:\Windows\Fonts\arial.ttf"
             if os.path.exists(font_path):
                 pdfmetrics.registerFont(TTFont('Arial', font_path))
                 font_name = 'Arial'
+                font_name_bold = 'Arial'
     except: pass
 
     comp = get_company_data()
@@ -1650,7 +1655,7 @@ def create_voucher_pdf(voucher_data):
 
     # Thông tin công ty
     c.setFillColor(HexColor(primary_color))
-    c.setFont(font_name, 16)
+    c.setFont(font_name_bold, 16)
     c.drawString(header_x_text, header_y - 15, comp['name'].upper())
     
     c.setFillColor(HexColor(text_color))
@@ -1666,7 +1671,7 @@ def create_voucher_pdf(voucher_data):
     # --- TIÊU ĐỀ ---
     title = "PHIẾU THU TIỀN" if voucher_data['type'] == 'THU' else "PHIẾU CHI TIỀN"
     c.setFillColor(HexColor(primary_color))
-    c.setFont(font_name, 24)
+    c.setFont(font_name_bold, 24)
     c.drawCentredString(width/2, height - 150, title)
     
     c.setFillColor(HexColor(text_color))
@@ -1739,7 +1744,7 @@ def create_voucher_pdf(voucher_data):
         c.drawString(x_label, y_pos, label)
         
         if is_money:
-            c.setFont(font_name, 14)
+            c.setFont(font_name_bold, 14)
             c.setFillColor(HexColor(primary_color))
             c.drawString(x_val, y_pos, value)
             c.setFillColor(HexColor(text_color)) # Reset
@@ -3952,11 +3957,11 @@ def render_debt_management():
                             worksheet = workbook.add_worksheet('CongNo')
                             
                             # Formats
-                            fmt_title = workbook.add_format({'bold': True, 'font_size': 16, 'align': 'center', 'valign': 'vcenter', 'font_color': '#B71C1C'})
-                            fmt_header = workbook.add_format({'bold': True, 'bg_color': '#FFEBEE', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_color': '#B71C1C', 'text_wrap': True})
-                            fmt_text = workbook.add_format({'border': 1, 'valign': 'vcenter', 'text_wrap': True})
-                            fmt_money = workbook.add_format({'border': 1, 'valign': 'vcenter', 'num_format': '#,##0'})
-                            fmt_comp = workbook.add_format({'bold': True, 'font_size': 12, 'font_color': '#1B5E20'})
+                            fmt_title = workbook.add_format({'bold': True, 'font_size': 16, 'align': 'center', 'valign': 'vcenter', 'font_color': '#B71C1C', 'font_name': 'Times New Roman'})
+                            fmt_header = workbook.add_format({'bold': True, 'bg_color': '#FFEBEE', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_color': '#B71C1C', 'text_wrap': True, 'font_name': 'Times New Roman'})
+                            fmt_text = workbook.add_format({'border': 1, 'valign': 'vcenter', 'text_wrap': True, 'font_name': 'Times New Roman'})
+                            fmt_money = workbook.add_format({'border': 1, 'valign': 'vcenter', 'num_format': '#,##0', 'font_name': 'Times New Roman'})
+                            fmt_comp = workbook.add_format({'bold': True, 'font_size': 12, 'font_color': '#1B5E20', 'font_name': 'Times New Roman'})
                             
                             # Company Info
                             comp_data = get_company_data()
@@ -3988,7 +3993,7 @@ def render_debt_management():
                                 row += 1
                                 
                             # Total row
-                            fmt_total = workbook.add_format({'bold': True, 'bg_color': '#FFCDD2', 'border': 1, 'num_format': '#,##0', 'align': 'right'})
+                            fmt_total = workbook.add_format({'bold': True, 'bg_color': '#FFCDD2', 'border': 1, 'num_format': '#,##0', 'align': 'right', 'font_name': 'Times New Roman'})
                             worksheet.merge_range(row, 0, row, 3, "TỔNG CỘNG", fmt_total)
                             worksheet.write(row, 4, df_export['contract_value'].sum(), fmt_total)
                             worksheet.write(row, 5, df_export['paid'].sum(), fmt_total)
@@ -4865,7 +4870,7 @@ def render_tour_management():
             # Prepare Display Data (Tạo bản sao để hiển thị format đẹp)
             df_display = st.session_state.est_df_temp.copy()
             # [NEW] Tạo số thứ tự (STT) tự động
-            df_display.index = range(1, len(df_display) + 1)
+            df_display.index = pd.RangeIndex(start=1, stop=len(df_display) + 1)
             
             # [MODIFIED] Tính Giá/Pax và ẩn cột Times
             guest_cnt = tour_info['guest_count'] if tour_info['guest_count'] else 1 # type: ignore
@@ -5041,23 +5046,23 @@ def render_tour_management():
                         worksheet = writer.sheets['DuToan']
                         
                         # --- STYLES ---
-                        company_name_fmt = workbook.add_format({'bold': True, 'font_size': 14, 'font_color': '#1B5E20'})
-                        company_info_fmt = workbook.add_format({'font_size': 10, 'italic': True, 'font_color': '#424242'})
+                        company_name_fmt = workbook.add_format({'bold': True, 'font_size': 14, 'font_color': '#1B5E20', 'font_name': 'Times New Roman'})
+                        company_info_fmt = workbook.add_format({'font_size': 10, 'italic': True, 'font_color': '#424242', 'font_name': 'Times New Roman'})
                         
-                        title_fmt = workbook.add_format({'bold': True, 'font_size': 18, 'align': 'center', 'valign': 'vcenter', 'font_color': '#0D47A1', 'bg_color': '#E3F2FD', 'border': 1})
-                        section_fmt = workbook.add_format({'bold': True, 'font_size': 11, 'font_color': '#E65100', 'underline': True})
+                        title_fmt = workbook.add_format({'bold': True, 'font_size': 18, 'align': 'center', 'valign': 'vcenter', 'font_color': '#0D47A1', 'bg_color': '#E3F2FD', 'border': 1, 'font_name': 'Times New Roman'})
+                        section_fmt = workbook.add_format({'bold': True, 'font_size': 11, 'font_color': '#E65100', 'underline': True, 'font_name': 'Times New Roman'})
                         
-                        header_fmt = workbook.add_format({'bold': True, 'fg_color': '#2E7D32', 'font_color': 'white', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True})
-                        body_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'text_wrap': True, 'font_size': 10})
-                        body_center_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'align': 'center', 'font_size': 10})
-                        money_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'num_format': '#,##0', 'font_size': 10})
+                        header_fmt = workbook.add_format({'bold': True, 'fg_color': '#2E7D32', 'font_color': 'white', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True, 'font_name': 'Times New Roman'})
+                        body_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'text_wrap': True, 'font_size': 10, 'font_name': 'Times New Roman'})
+                        body_center_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'align': 'center', 'font_size': 10, 'font_name': 'Times New Roman'})
+                        money_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'num_format': '#,##0', 'font_size': 10, 'font_name': 'Times New Roman'})
                         
                         # Summary Section Styles
-                        sum_header_bg_fmt = workbook.add_format({'bold': True, 'bg_color': '#FFF3E0', 'border': 1, 'font_color': '#E65100', 'align': 'center', 'valign': 'vcenter'})
-                        sum_label_fmt = workbook.add_format({'bold': True, 'align': 'left', 'border': 1, 'bg_color': '#FAFAFA'})
-                        sum_val_fmt = workbook.add_format({'num_format': '#,##0', 'align': 'right', 'border': 1})
-                        sum_val_bold_fmt = workbook.add_format({'bold': True, 'num_format': '#,##0', 'align': 'right', 'border': 1})
-                        sum_total_fmt = workbook.add_format({'bold': True, 'bg_color': '#C8E6C9', 'font_color': '#1B5E20', 'num_format': '#,##0', 'align': 'right', 'border': 1, 'font_size': 12})
+                        sum_header_bg_fmt = workbook.add_format({'bold': True, 'bg_color': '#FFF3E0', 'border': 1, 'font_color': '#E65100', 'align': 'center', 'valign': 'vcenter', 'font_name': 'Times New Roman'})
+                        sum_label_fmt = workbook.add_format({'bold': True, 'align': 'left', 'border': 1, 'bg_color': '#FAFAFA', 'font_name': 'Times New Roman'})
+                        sum_val_fmt = workbook.add_format({'num_format': '#,##0', 'align': 'right', 'border': 1, 'font_name': 'Times New Roman'})
+                        sum_val_bold_fmt = workbook.add_format({'bold': True, 'num_format': '#,##0', 'align': 'right', 'border': 1, 'font_name': 'Times New Roman'})
+                        sum_total_fmt = workbook.add_format({'bold': True, 'bg_color': '#C8E6C9', 'font_color': '#1B5E20', 'num_format': '#,##0', 'align': 'right', 'border': 1, 'font_size': 12, 'font_name': 'Times New Roman'})
                         
                         # --- 1. COMPANY INFO (Rows 0-3) ---
                         if comp['logo_b64_str']:
@@ -5678,25 +5683,25 @@ def render_tour_management():
                         # ws = workbook.add_worksheet("ThucDon")
                         
                         # Formats
-                        fmt_comp = workbook.add_format({'bold': True, 'font_size': 12, 'font_color': '#1B5E20'})
-                        fmt_info = workbook.add_format({'font_size': 10, 'italic': True})
-                        fmt_title = workbook.add_format({'bold': True, 'font_size': 16, 'align': 'center', 'valign': 'vcenter', 'font_color': '#E65100', 'border': 0})
-                        fmt_header = workbook.add_format({'bold': True, 'bg_color': '#FFF3E0', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True, 'font_color': '#E65100'})
-                        fmt_text = workbook.add_format({'border': 1, 'valign': 'vcenter', 'text_wrap': True})
+                        fmt_comp = workbook.add_format({'bold': True, 'font_size': 12, 'font_color': '#1B5E20', 'font_name': 'Times New Roman'})
+                        fmt_info = workbook.add_format({'font_size': 10, 'italic': True, 'font_name': 'Times New Roman'})
+                        fmt_title = workbook.add_format({'bold': True, 'font_size': 16, 'align': 'center', 'valign': 'vcenter', 'font_color': '#E65100', 'border': 0, 'font_name': 'Times New Roman'})
+                        fmt_header = workbook.add_format({'bold': True, 'bg_color': '#FFF3E0', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True, 'font_color': '#E65100', 'font_name': 'Times New Roman'})
+                        fmt_text = workbook.add_format({'border': 1, 'valign': 'vcenter', 'text_wrap': True, 'font_name': 'Times New Roman'})
                         # ==========================================
                         # SHEET 1: BÀN GIAO (BAN_GIAO_HDV)
                         # ==========================================
                         ws_bg = workbook.add_worksheet("BAN_GIAO_HDV")
                         
                         # --- FORMATS (BÀN GIAO) ---
-                        fmt_title_bg = workbook.add_format({'bold': True, 'font_size': 16, 'align': 'center', 'valign': 'vcenter', 'font_color': '#0D47A1', 'border': 0})
-                        fmt_comp_bg = workbook.add_format({'bold': True, 'font_size': 11, 'font_color': '#1B5E20'})
-                        fmt_header_bg = workbook.add_format({'bold': True, 'bg_color': '#E0F7FA', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True})
-                        fmt_label_bg = workbook.add_format({'bold': True, 'bg_color': '#F5F5F5', 'border': 1, 'align': 'left', 'valign': 'vcenter'})
-                        fmt_text_bg = workbook.add_format({'border': 1, 'valign': 'vcenter', 'text_wrap': True})
-                        fmt_center_bg = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True})
-                        fmt_section_bg = workbook.add_format({'bold': True, 'bg_color': '#FFF3E0', 'border': 1, 'font_color': '#E65100', 'align': 'left', 'valign': 'vcenter'})
-                        money_fmt_bg = workbook.add_format({'border': 1, 'valign': 'vcenter', 'num_format': '#,##0'})
+                        fmt_title_bg = workbook.add_format({'bold': True, 'font_size': 16, 'align': 'center', 'valign': 'vcenter', 'font_color': '#0D47A1', 'border': 0, 'font_name': 'Times New Roman'})
+                        fmt_comp_bg = workbook.add_format({'bold': True, 'font_size': 11, 'font_color': '#1B5E20', 'font_name': 'Times New Roman'})
+                        fmt_header_bg = workbook.add_format({'bold': True, 'bg_color': '#E0F7FA', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True, 'font_name': 'Times New Roman'})
+                        fmt_label_bg = workbook.add_format({'bold': True, 'bg_color': '#F5F5F5', 'border': 1, 'align': 'left', 'valign': 'vcenter', 'font_name': 'Times New Roman'})
+                        fmt_text_bg = workbook.add_format({'border': 1, 'valign': 'vcenter', 'text_wrap': True, 'font_name': 'Times New Roman'})
+                        fmt_center_bg = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True, 'font_name': 'Times New Roman'})
+                        fmt_section_bg = workbook.add_format({'bold': True, 'bg_color': '#FFF3E0', 'border': 1, 'font_color': '#E65100', 'align': 'left', 'valign': 'vcenter', 'font_name': 'Times New Roman'})
+                        money_fmt_bg = workbook.add_format({'border': 1, 'valign': 'vcenter', 'num_format': '#,##0', 'font_name': 'Times New Roman'})
 
                         # Helper to safely parse float from potential strings
                         def safe_float_exp(x):
@@ -5950,7 +5955,7 @@ def render_tour_management():
                         # 3. Còn lại
                         row += 1
                         ws_bg.merge_range(row, 0, row, 3, "3. CÒN LẠI CẦN THANH TOÁN (HDV CHI):", fmt_label_bg)
-                        ws_bg.merge_range(row, 4, row, 5, grand_remaining, workbook.add_format({'bold': True, 'border': 1, 'valign': 'vcenter', 'num_format': '#,##0', 'bg_color': '#FFF9C4'}))
+                        ws_bg.merge_range(row, 4, row, 5, grand_remaining, workbook.add_format({'bold': True, 'border': 1, 'valign': 'vcenter', 'num_format': '#,##0', 'bg_color': '#FFF9C4', 'font_name': 'Times New Roman'}))
 
                         # [FIX] Chi tiết còn lại (Thay vì chi tiết cọc)
                         r_h = t_h - d_h
@@ -5979,12 +5984,12 @@ def render_tour_management():
                         # 5. Quyết toán
                         row += 1
                         ws_bg.merge_range(row, 0, row, 3, "5. QUYẾT TOÁN (THU LẠI / CHI THÊM):", fmt_label_bg)
-                        ws_bg.merge_range(row, 4, row, 5, balance, workbook.add_format({'bold': True, 'border': 1, 'valign': 'vcenter', 'num_format': '#,##0', 'font_color': '#D32F2F', 'font_size': 11}))
+                        ws_bg.merge_range(row, 4, row, 5, balance, workbook.add_format({'bold': True, 'border': 1, 'valign': 'vcenter', 'num_format': '#,##0', 'font_color': '#D32F2F', 'font_size': 11, 'font_name': 'Times New Roman'}))
 
                         # FOOTER: CHỮ KÝ
                         row += 3
-                        fmt_sig_title = workbook.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter'})
-                        fmt_sig_name = workbook.add_format({'italic': True, 'align': 'center', 'valign': 'vcenter'})
+                        fmt_sig_title = workbook.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'font_name': 'Times New Roman'})
+                        fmt_sig_name = workbook.add_format({'italic': True, 'align': 'center', 'valign': 'vcenter', 'font_name': 'Times New Roman'})
                         
                         ws_bg.write(row, 0, "NGƯỜI LẬP PHIẾU", fmt_sig_title)
                         ws_bg.merge_range(row, 1, row, 2, "KẾ TOÁN", fmt_sig_title)
@@ -6057,11 +6062,11 @@ def render_tour_management():
                         ws_menu = workbook.add_worksheet("ThucDon")
                         
                         # Formats (Menu)
-                        fmt_comp_menu = workbook.add_format({'bold': True, 'font_size': 12, 'font_color': '#1B5E20'})
-                        fmt_info_menu = workbook.add_format({'font_size': 10, 'italic': True})
-                        fmt_title_menu = workbook.add_format({'bold': True, 'font_size': 16, 'align': 'center', 'valign': 'vcenter', 'font_color': '#E65100', 'border': 0})
-                        fmt_header_menu = workbook.add_format({'bold': True, 'bg_color': '#FFF3E0', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True, 'font_color': '#E65100'})
-                        fmt_text_menu = workbook.add_format({'border': 1, 'valign': 'vcenter', 'text_wrap': True})
+                        fmt_comp_menu = workbook.add_format({'bold': True, 'font_size': 12, 'font_color': '#1B5E20', 'font_name': 'Times New Roman'})
+                        fmt_info_menu = workbook.add_format({'font_size': 10, 'italic': True, 'font_name': 'Times New Roman'})
+                        fmt_title_menu = workbook.add_format({'bold': True, 'font_size': 16, 'align': 'center', 'valign': 'vcenter', 'font_color': '#E65100', 'border': 0, 'font_name': 'Times New Roman'})
+                        fmt_header_menu = workbook.add_format({'bold': True, 'bg_color': '#FFF3E0', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True, 'font_color': '#E65100', 'font_name': 'Times New Roman'})
+                        fmt_text_menu = workbook.add_format({'border': 1, 'valign': 'vcenter', 'text_wrap': True, 'font_name': 'Times New Roman'})
                         
                         # Company Info
                         comp_data = get_company_data()
@@ -6426,27 +6431,27 @@ def render_tour_management():
                     worksheet = workbook.add_worksheet('QuyetToan')
                     
                     # Styles (Copied and adapted)
-                    company_name_fmt = workbook.add_format({'bold': True, 'font_size': 14, 'font_color': '#D84315'}) # Orange for Act
-                    company_info_fmt = workbook.add_format({'font_size': 10, 'italic': True, 'font_color': '#424242'})
-                    title_fmt = workbook.add_format({'bold': True, 'font_size': 18, 'align': 'center', 'valign': 'vcenter', 'font_color': '#BF360C', 'bg_color': '#FBE9E7', 'border': 1})
+                    company_name_fmt = workbook.add_format({'bold': True, 'font_size': 14, 'font_color': '#D84315', 'font_name': 'Times New Roman'}) # Orange for Act
+                    company_info_fmt = workbook.add_format({'font_size': 10, 'italic': True, 'font_color': '#424242', 'font_name': 'Times New Roman'})
+                    title_fmt = workbook.add_format({'bold': True, 'font_size': 18, 'align': 'center', 'valign': 'vcenter', 'font_color': '#BF360C', 'bg_color': '#FBE9E7', 'border': 1, 'font_name': 'Times New Roman'})
                     
-                    header_fmt = workbook.add_format({'bold': True, 'fg_color': '#D84315', 'font_color': 'white', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True})
-                    body_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'text_wrap': True, 'font_size': 10})
-                    body_center_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'align': 'center', 'font_size': 10})
-                    money_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'num_format': '#,##0', 'font_size': 10})
+                    header_fmt = workbook.add_format({'bold': True, 'fg_color': '#D84315', 'font_color': 'white', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True, 'font_name': 'Times New Roman'})
+                    body_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'text_wrap': True, 'font_size': 10, 'font_name': 'Times New Roman'})
+                    body_center_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'align': 'center', 'font_size': 10, 'font_name': 'Times New Roman'})
+                    money_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'num_format': '#,##0', 'font_size': 10, 'font_name': 'Times New Roman'})
                     
                     # Summary Styles
-                    sum_header_bg_fmt = workbook.add_format({'bold': True, 'bg_color': '#FFF3E0', 'border': 1, 'font_color': '#E65100', 'align': 'center', 'valign': 'vcenter'})
-                    sum_label_fmt = workbook.add_format({'bold': True, 'align': 'left', 'border': 1, 'bg_color': '#FAFAFA'})
-                    sum_val_fmt = workbook.add_format({'num_format': '#,##0', 'align': 'right', 'border': 1})
-                    sum_val_bold_fmt = workbook.add_format({'bold': True, 'num_format': '#,##0', 'align': 'right', 'border': 1})
+                    sum_header_bg_fmt = workbook.add_format({'bold': True, 'bg_color': '#FFF3E0', 'border': 1, 'font_color': '#E65100', 'align': 'center', 'valign': 'vcenter', 'font_name': 'Times New Roman'})
+                    sum_label_fmt = workbook.add_format({'bold': True, 'align': 'left', 'border': 1, 'bg_color': '#FAFAFA', 'font_name': 'Times New Roman'})
+                    sum_val_fmt = workbook.add_format({'num_format': '#,##0', 'align': 'right', 'border': 1, 'font_name': 'Times New Roman'})
+                    sum_val_bold_fmt = workbook.add_format({'bold': True, 'num_format': '#,##0', 'align': 'right', 'border': 1, 'font_name': 'Times New Roman'})
                     
                     # [CODE MỚI] Format màu đỏ cho dòng âm
-                    alert_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'text_wrap': True, 'font_size': 10, 'font_color': '#D32F2F'})
-                    alert_money_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'num_format': '#,##0', 'font_size': 10, 'font_color': '#D32F2F'})
+                    alert_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'text_wrap': True, 'font_size': 10, 'font_color': '#D32F2F', 'font_name': 'Times New Roman'})
+                    alert_money_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'num_format': '#,##0', 'font_size': 10, 'font_color': '#D32F2F', 'font_name': 'Times New Roman'})
 
                     # [CODE MỚI] Format cho tiêu đề các bảng chi phí
-                    section_title_fmt = workbook.add_format({'bold': True, 'font_size': 12, 'font_color': '#004D40', 'bg_color': '#E0F2F1', 'border': 1, 'align': 'center'})
+                    section_title_fmt = workbook.add_format({'bold': True, 'font_size': 12, 'font_color': '#004D40', 'bg_color': '#E0F2F1', 'border': 1, 'align': 'center', 'font_name': 'Times New Roman'})
 
                     # 1. Company Info
                     if comp['logo_b64_str']:
@@ -6547,12 +6552,12 @@ def render_tour_management():
                     
                     # 3. Lợi nhuận
                     worksheet.write(sum_row+3, 0, "3. Lợi nhuận thực tế:", sum_label_fmt)
-                    profit_fmt = workbook.add_format({'bold': True, 'num_format': '#,##0', 'align': 'right', 'border': 1, 'bg_color': '#C8E6C9', 'font_color': '#1B5E20'})
+                    profit_fmt = workbook.add_format({'bold': True, 'num_format': '#,##0', 'align': 'right', 'border': 1, 'bg_color': '#C8E6C9', 'font_color': '#1B5E20', 'font_name': 'Times New Roman'})
                     worksheet.merge_range(sum_row+3, 1, sum_row+3, 3, final_profit, profit_fmt)
                     
                     # Note nhỏ về chi phí ngoài
                     if total_inv > 0:
-                        worksheet.write(sum_row+4, 0, f"(Bao gồm {format_vnd(total_inv)} hóa đơn phát sinh ngoài bảng kê)", workbook.add_format({'italic': True, 'font_size': 9}))
+                        worksheet.write(sum_row+4, 0, f"(Bao gồm {format_vnd(total_inv)} hóa đơn phát sinh ngoài bảng kê)", workbook.add_format({'italic': True, 'font_size': 9, 'font_name': 'Times New Roman'}))
                     
                     # Column Widths
                     worksheet.set_column('A:A', 25)
@@ -6809,10 +6814,10 @@ def render_tour_management():
                 worksheet = writer.sheets['Report']
                 
                 # Định dạng
-                header_fmt = workbook.add_format({'bold': True, 'fg_color': '#2E7D32', 'font_color': 'white', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-                body_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter'})
-                money_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'num_format': '#,##0'})
-                pct_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'num_format': '0.00"%"'})
+                header_fmt = workbook.add_format({'bold': True, 'fg_color': '#2E7D32', 'font_color': 'white', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_name': 'Times New Roman'})
+                body_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'font_name': 'Times New Roman'})
+                money_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'num_format': '#,##0', 'font_name': 'Times New Roman'})
+                pct_fmt = workbook.add_format({'border': 1, 'valign': 'vcenter', 'num_format': '0.00"%"', 'font_name': 'Times New Roman'})
                 
                 # Áp dụng định dạng header
                 for col_num, value in enumerate(df_export.columns):
