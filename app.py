@@ -62,8 +62,9 @@ except ImportError:
 import openpyxl
 import xlsxwriter
 from docx import Document
-from docx.shared import Pt, Inches, Cm
+from docx.shared import Pt, Inches, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_TABLE_ALIGNMENT
 HAS_OPENPYXL = True
 HAS_XLSXWRITER = True
 HAS_CV = True
@@ -1817,6 +1818,116 @@ def create_voucher_pdf(voucher_data):
     buffer.seek(0)
     return buffer
 
+def create_voucher_docx(voucher_data):
+    """Tạo file Word phiếu thu/chi"""
+    doc = Document()
+    # Styles
+    style = doc.styles['Normal']
+    font = style.font # type: ignore
+    font.name = 'Times New Roman'
+    font.size = Pt(11)
+    
+    comp = get_company_data()
+    
+    # Header
+    t = doc.add_table(rows=1, cols=2)
+    t.autofit = False
+    t.columns[0].width = Cm(2.5)
+    t.columns[1].width = Cm(14)
+    
+    # Logo
+    if comp['logo_b64_str']:
+        try:
+            logo_data = base64.b64decode(comp['logo_b64_str'])
+            image_stream = io.BytesIO(logo_data)
+            cell = t.cell(0, 0)
+            p = cell.paragraphs[0]
+            r = p.add_run()
+            r.add_picture(image_stream, width=Cm(2.5))
+        except: pass
+        
+    # Company Info
+    cell = t.cell(0, 1)
+    p = cell.paragraphs[0]
+    r = p.add_run(comp['name'].upper() + "\n")
+    r.bold = True
+    r.font.size = Pt(13)
+    r.font.color.rgb = RGBColor(46, 125, 50)
+    
+    p.add_run(f"Địa chỉ: {comp['address']}\n")
+    p.add_run(f"Hotline/MST: {comp['phone']}")
+    
+    doc.add_paragraph()
+    
+    # Title
+    title = "PHIẾU THU TIỀN" if voucher_data['type'] == 'THU' else "PHIẾU CHI TIỀN"
+    color = RGBColor(46, 125, 50) if voucher_data['type'] == 'THU' else RGBColor(198, 40, 40)
+    
+    p_title = doc.add_paragraph(title)
+    p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r_t = p_title.runs[0]
+    r_t.bold = True
+    r_t.font.size = Pt(20)
+    r_t.font.color.rgb = color
+    
+    p_date = doc.add_paragraph(f"Ngày: {voucher_data['date']}")
+    p_date.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    doc.add_paragraph()
+    
+    # Data Logic
+    person_name = ""
+    ref_code = voucher_data.get('ref_code', '')
+    if ref_code:
+        try:
+            t = run_query("SELECT customer_name FROM tours WHERE tour_code=?", (ref_code,), fetch_one=True)
+            if t and t['customer_name']: person_name = t['customer_name']
+            else:
+                b = run_query("SELECT customer_info FROM service_bookings WHERE code=?", (ref_code,), fetch_one=True)
+                if b and b['customer_info']: person_name = b['customer_info'].split(' - ')[0]
+        except: pass
+
+    # Content Table
+    t_content = doc.add_table(rows=0, cols=2)
+    t_content.autofit = False
+    t_content.columns[0].width = Cm(4)
+    t_content.columns[1].width = Cm(12)
+    
+    def add_row(label, value, bold_val=False, color_val=None):
+        r = t_content.add_row()
+        r.cells[0].text = label
+        r.cells[1].text = str(value)
+        if bold_val: 
+            r.cells[1].paragraphs[0].runs[0].bold = True
+        if color_val:
+            r.cells[1].paragraphs[0].runs[0].font.color.rgb = color_val
+
+    label_person = "Người nộp tiền:" if voucher_data['type'] == 'THU' else "Người nhận tiền:"
+    add_row(label_person, person_name)
+    add_row("Lý do:", f"{voucher_data['note']} (Mã: {voucher_data['ref_code']})")
+    add_row("Số tiền:", f"{format_vnd(voucher_data['amount'])} VND", True, color)
+    add_row("Bằng chữ:", read_money_vietnamese(voucher_data['amount']))
+    add_row("Người xuất phiếu:", voucher_data.get('issuer', ''))
+    
+    doc.add_paragraph()
+    
+    # Signatures
+    t_sig = doc.add_table(rows=1, cols=4)
+    t_sig.autofit = True
+    sigs = ["Giám đốc", "Kế toán trưởng", "Người lập phiếu", "Người nộp/nhận"]
+    for i, s in enumerate(sigs):
+        cell = t_sig.cell(0, i)
+        p = cell.paragraphs[0]
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r = p.add_run(s + "\n\n\n\n")
+        r.bold = True
+        p.add_run("(Ký, họ tên)")
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer
+
 def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
     """Tạo file PDF Booking Confirmation (CFM)"""
     buffer = io.BytesIO()
@@ -2265,6 +2376,120 @@ def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
     c.drawCentredString(width / 2, 15, f"{txt['page']} {c.getPageNumber()}")
 
     c.save()
+    buffer.seek(0)
+    return buffer
+
+def create_booking_cfm_docx(booking_info, company_info, lang='en'):
+    """Tạo file Word Booking Confirmation"""
+    doc = Document()
+    style = doc.styles['Normal']
+    font = style.font # type: ignore
+    font.name = 'Times New Roman'
+    font.size = Pt(11)
+    
+    # Labels
+    labels = {
+        'en': {'title': 'BOOKING CONFIRMATION', 'greeting': f"A warm greeting from {company_info['name']}!", 'gen_info': 'I. GENERAL INFORMATION', 'svc_details': 'II. SERVICE DETAILS', 'guest_list': 'III. GUEST LIST', 'included': 'INCLUDED SERVICES'},
+        'vi': {'title': 'XÁC NHẬN ĐẶT DỊCH VỤ', 'greeting': f"Lời chào trân trọng từ {company_info['name']}!", 'gen_info': 'I. THÔNG TIN CHUNG', 'svc_details': 'II. CHI TIẾT DỊCH VỤ', 'guest_list': 'III. DANH SÁCH KHÁCH', 'included': 'DỊCH VỤ BAO GỒM'}
+    }
+    txt = labels[lang]
+    
+    # Header
+    t = doc.add_table(rows=1, cols=2)
+    t.autofit = False
+    t.columns[0].width = Cm(3)
+    t.columns[1].width = Cm(13)
+    
+    if company_info['logo_b64_str']:
+        try:
+            logo_data = base64.b64decode(company_info['logo_b64_str'])
+            image_stream = io.BytesIO(logo_data)
+            t.cell(0, 0).paragraphs[0].add_run().add_picture(image_stream, width=Cm(2.5))
+        except: pass
+        
+    cell = t.cell(0, 1)
+    p = cell.paragraphs[0]
+    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    r = p.add_run(company_info['name'].upper() + "\n")
+    r.bold = True; r.font.size = Pt(14); r.font.color.rgb = RGBColor(27, 94, 32)
+    p.add_run(f"{company_info['address']}\nHotline: {company_info['phone']}")
+    
+    doc.add_paragraph("-" * 90).alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    # Title
+    p_title = doc.add_paragraph(txt['title'])
+    p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_title.runs[0].bold = True; p_title.runs[0].font.size = Pt(18); p_title.runs[0].font.color.rgb = RGBColor(27, 94, 32)
+    
+    doc.add_paragraph(txt['greeting']).alignment = WD_ALIGN_PARAGRAPH.CENTER
+    doc.add_paragraph()
+    
+    # I. General Info
+    doc.add_heading(txt['gen_info'], level=1)
+    t_gen = doc.add_table(rows=0, cols=4)
+    t_gen.style = 'Table Grid'
+    
+    cust_raw = booking_info.get('customer_info', '')
+    cust_name = cust_raw.split(' - ')[0] if ' - ' in cust_raw else cust_raw
+    
+    def add_kv(k1, v1, k2, v2):
+        r = t_gen.add_row()
+        r.cells[0].text = k1; r.cells[0].paragraphs[0].runs[0].bold = True
+        r.cells[1].text = str(v1)
+        r.cells[2].text = k2; r.cells[2].paragraphs[0].runs[0].bold = True
+        r.cells[3].text = str(v2)
+        
+    add_kv("Booking Code:", booking_info['code'], "Created Date:", booking_info.get('created_at', ''))
+    add_kv("Customer:", cust_name, "Sales:", booking_info.get('sale_name', ''))
+    add_kv("Status:", booking_info.get('status', ''), "Hotel Code:", booking_info.get('hotel_code', ''))
+    
+    doc.add_paragraph()
+    
+    # II. Service Details
+    doc.add_heading(txt['svc_details'], level=1)
+    t_svc = doc.add_table(rows=1, cols=2)
+    t_svc.style = 'Table Grid'
+    t_svc.rows[0].cells[0].text = "SERVICE NAME"
+    t_svc.rows[0].cells[1].text = "DETAILS"
+    t_svc.rows[0].cells[0].paragraphs[0].runs[0].bold = True
+    t_svc.rows[0].cells[1].paragraphs[0].runs[0].bold = True
+    
+    r = t_svc.add_row()
+    r.cells[0].text = booking_info['name']
+    
+    details = booking_info.get('details', '')
+    if booking_info.get('type') == 'HOTEL':
+        r_type = booking_info.get('room_type', '')
+        if r_type: details += f"\nRoom Type: {r_type}"
+    
+    r.cells[1].text = details
+    
+    doc.add_paragraph()
+    
+    # III. Guest List
+    g_list = booking_info.get('guest_list', '')
+    if g_list:
+        doc.add_heading(txt['guest_list'], level=1)
+        doc.add_paragraph(g_list)
+        doc.add_paragraph()
+        
+    # Included
+    doc.add_heading(txt['included'], level=1)
+    doc.add_paragraph("- Tax and Service charges.\n- 24/7 Support.")
+    
+    doc.add_paragraph()
+    doc.add_paragraph()
+    
+    # Signature
+    p_sig = doc.add_paragraph("CONFIRMED BY")
+    p_sig.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    p_sig.runs[0].bold = True
+    
+    p_comp = doc.add_paragraph(company_info['name'])
+    p_comp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    
+    buffer = io.BytesIO()
+    doc.save(buffer)
     buffer.seek(0)
     return buffer
 
@@ -3793,9 +4018,9 @@ def render_debt_management():
                             }
                             st.session_state.last_voucher = v_data
                             
-                            # Tạo PDF ngay và cache lại
-                            pdf_bytes = create_voucher_pdf(v_data)
-                            st.session_state.last_voucher_pdf = pdf_bytes
+                            # Tạo DOCX ngay và cache lại
+                            docx_bytes = create_voucher_docx(v_data)
+                            st.session_state.last_voucher_pdf = docx_bytes # Tái sử dụng biến session cũ
                             
                             if k_amt in st.session_state: del st.session_state[k_amt]
                             if k_note in st.session_state: del st.session_state[k_note]
@@ -3860,15 +4085,15 @@ def render_debt_management():
                                 'date': d_str,
                                 'issuer': st.session_state.user_info.get('name', '')
                             }
-                            pdf_bytes = create_voucher_pdf(v_data)
+                            docx_bytes = create_voucher_docx(v_data)
                             
                             c_dl, c_del = st.columns([1, 1])
                             with c_dl:
                                 st.download_button(
-                                    label="📥 Tải Phiếu (PDF)",
-                                    data=pdf_bytes,
-                                    file_name=f"Phieu_{txn['type']}_{txn['id']}.pdf",
-                                    mime="application/pdf",
+                                    label="📥 Tải Phiếu (Word)",
+                                    data=docx_bytes,
+                                    file_name=f"Phieu_{txn['type']}_{txn['id']}.docx",
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                                     key=f"dl_hist_btn_{txn['id']}",
                                     use_container_width=True,
                                     type="primary"
@@ -4608,12 +4833,12 @@ def render_booking_management():
                 lang_code = 'vi' if sel_lang == "Tiếng Việt" else 'en'
                 
                 comp_data_cfm = get_company_data()
-                pdf_cfm = create_booking_cfm_pdf(dict(bk_info), comp_data_cfm, lang=lang_code)
+                docx_cfm = create_booking_cfm_docx(dict(bk_info), comp_data_cfm, lang=lang_code)
                 c_dl_btn.download_button(
-                    label="📥 Tải Booking Confirmation (PDF)",
-                    data=pdf_cfm,
-                    file_name=f"Booking_CFM_{code}.pdf",
-                    mime="application/pdf",
+                    label="📥 Tải Booking Confirmation (Word)",
+                    data=docx_cfm,
+                    file_name=f"Booking_CFM_{code}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     type="secondary"
                 )
                 
@@ -5214,7 +5439,13 @@ def render_tour_management():
                 st.info("💡 Gợi ý: Nếu bạn vừa cài thư viện, hãy TẮT HẲN ứng dụng (Ctrl+C tại terminal) và chạy lại lệnh `streamlit run app.py`.")
 
             clean_t_name = re.sub(r'[\\/*?:"<>|]', "", tour_info['tour_name'] if tour_info else "Tour") # type: ignore
-            st.download_button(label=f"📥 Tải Bảng Dự Toán ({file_ext.upper()})", data=buffer.getvalue(), file_name=f"DuToan_{clean_t_name}.{file_ext}", mime=mime_type, use_container_width=True)
+            st.download_button(
+                f"📥 Tải Bảng Dự Toán ({file_ext.upper()})", 
+                data=buffer.getvalue(), 
+                file_name=f"DuToan_{clean_t_name}.{file_ext}", 
+                mime=mime_type, 
+                use_container_width=True
+            )
 
             # --- Nút Chỉnh sửa / Lưu ---
             if st.session_state.est_edit_mode:
@@ -6603,7 +6834,13 @@ def render_tour_management():
                 mime_type_act = "text/csv"
 
             clean_t_name_act = re.sub(r'[\\/*?:"<>|]', "", tour_info_act['tour_name'] if tour_info_act else "Tour") # type: ignore
-            st.download_button(label=f"📥 Tải Bảng Quyết Toán ({file_ext_act.upper()})", data=buffer_act.getvalue(), file_name=f"QuyetToan_{clean_t_name_act}.{file_ext_act}", mime=mime_type_act, use_container_width=True)
+            st.download_button(
+                f"📥 Tải Bảng Quyết Toán ({file_ext_act.upper()})", 
+                data=buffer_act.getvalue(), 
+                file_name=f"QuyetToan_{clean_t_name_act}.{file_ext_act}", 
+                mime=mime_type_act, 
+                use_container_width=True
+            )
 
             def save_act_logic():
                 run_query("DELETE FROM tour_items WHERE tour_id=? AND item_type='ACT'", (tour_id_act,), commit=True)
