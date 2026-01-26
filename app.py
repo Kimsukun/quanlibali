@@ -2257,6 +2257,40 @@ def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
             if item.strip(): 
                 display_item = translate_content(item.strip())
                 items.append((display_item, ""))
+    elif booking_info.get('type') == 'TRANS' and '[XE]' in booking_info.get('name', ''):
+        # [NEW] Xử lý hiển thị chi tiết cho Booking Xe (Tách dòng)
+        name_display = translate_content(booking_info['name'])
+        raw_details = booking_info.get('details', '')
+        
+        # 1. Lịch trình (Lấy từ tên booking)
+        itinerary = booking_info['name'].replace('[XE]', '').strip()
+        
+        # 2. Thông tin xe
+        car_info = ""
+        m_car = re.search(r'Xe\s*([^:]*):\s*([^|]+)', raw_details)
+        if m_car: car_info = f"{m_car.group(1).strip()} - {m_car.group(2).strip()}"
+            
+        # 3. Tài xế & SĐT
+        driver_name = ""
+        driver_phone = ""
+        m_drv_full = re.search(r'Tài xế:\s*([^|]+)', raw_details)
+        if m_drv_full:
+            drv_str = m_drv_full.group(1).strip()
+            if ' - ' in drv_str:
+                parts = drv_str.split(' - ')
+                driver_name = parts[0]
+                driver_phone = parts[1] if len(parts) > 1 else ""
+            else:
+                driver_name = drv_str
+
+        lines = []
+        if itinerary: lines.append(f"Lịch trình: {itinerary}" if lang == 'vi' else f"Itinerary: {itinerary}")
+        if car_info: lines.append(f"Xe/Biển số: {car_info}" if lang == 'vi' else f"Car/Plate: {car_info}")
+        if driver_name: lines.append(f"Tài xế: {driver_name}" if lang == 'vi' else f"Driver: {driver_name}")
+        if driver_phone: lines.append(f"SĐT: {driver_phone}" if lang == 'vi' else f"Phone: {driver_phone}")
+        
+        details_display = "\n".join(lines)
+        items.append((name_display, details_display))
     else:
         # Translate basic keywords for non-hotel types
         details_display = translate_content(details)
@@ -2523,6 +2557,34 @@ def create_booking_cfm_docx(booking_info, company_info, lang='en'):
     if booking_info.get('type') == 'HOTEL':
         r_type = booking_info.get('room_type', '')
         if r_type: details += f"\nRoom Type: {r_type}"
+    elif booking_info.get('type') == 'TRANS' and '[XE]' in booking_info.get('name', ''):
+        # [NEW] Xử lý hiển thị chi tiết cho Booking Xe (Word)
+        raw_details = details
+        itinerary = booking_info['name'].replace('[XE]', '').strip()
+        
+        car_info = ""
+        m_car = re.search(r'Xe\s*([^:]*):\s*([^|]+)', raw_details)
+        if m_car: car_info = f"{m_car.group(1).strip()} - {m_car.group(2).strip()}"
+            
+        driver_name = ""
+        driver_phone = ""
+        m_drv_full = re.search(r'Tài xế:\s*([^|]+)', raw_details)
+        if m_drv_full:
+            drv_str = m_drv_full.group(1).strip()
+            if ' - ' in drv_str:
+                parts = drv_str.split(' - ')
+                driver_name = parts[0]
+                driver_phone = parts[1] if len(parts) > 1 else ""
+            else:
+                driver_name = drv_str
+
+        lines = []
+        if itinerary: lines.append(f"Lịch trình: {itinerary}" if lang == 'vi' else f"Itinerary: {itinerary}")
+        if car_info: lines.append(f"Xe/Biển số: {car_info}" if lang == 'vi' else f"Car/Plate: {car_info}")
+        if driver_name: lines.append(f"Tài xế: {driver_name}" if lang == 'vi' else f"Driver: {driver_name}")
+        if driver_phone: lines.append(f"SĐT: {driver_phone}" if lang == 'vi' else f"Phone: {driver_phone}")
+        
+        if lines: details = "\n".join(lines)
     
     r.cells[1].text = details
     
@@ -4568,10 +4630,19 @@ def render_booking_management():
                         car_no = c4.text_input("Biển số / Mã xe")
                         t_date = c5.date_input("Ngày đi", format="DD/MM/YYYY")
                         
+                        # [NEW] Thêm thông tin tài xế
+                        c_drv1, c_drv2 = st.columns(2)
+                        driver_name = c_drv1.text_input("Tên tài xế")
+                        driver_phone = c_drv2.text_input("SĐT Tài xế")
+                        
                         if route_from and route_to:
                             is_valid = True
                             bk_name = f"[XE] {route_from} - {route_to}"
                             details = f"Xe {car_type}: {car_no} | Ngày: {t_date.strftime('%d/%m/%Y')} | SL: {qty}"
+                            if driver_name:
+                                details += f" | Tài xế: {driver_name}"
+                            if driver_phone:
+                                details += f" - {driver_phone}"
 
                     elif trans_type == "Máy bay":
                         c1, c2 = st.columns(2)
@@ -6175,18 +6246,25 @@ def render_tour_management():
                         ws_bg.merge_range(row, 0, row, 5, "3. Điểm tham quan", fmt_label_bg)
                         row += 1
                         ws_bg.write(row, 0, "Tên địa điểm", fmt_header_bg)
-                        ws_bg.merge_range(row, 1, row, 2, "Địa chỉ", fmt_header_bg)
-                        ws_bg.write(row, 3, "Số lượng", fmt_header_bg)
-                        ws_bg.merge_range(row, 4, row, 5, "Lưu ý", fmt_header_bg)
+                        ws_bg.write(row, 1, "Địa chỉ", fmt_header_bg)
+                        ws_bg.write(row, 2, "Số lượng", fmt_header_bg)
+                        ws_bg.write(row, 3, "Tổng tiền", fmt_header_bg)
+                        ws_bg.write(row, 4, "Còn lại", fmt_header_bg)
+                        ws_bg.write(row, 5, "Lưu ý", fmt_header_bg)
                         
                         df_sightseeings_exp = st.session_state.ls_sight_temp
                         if not df_sightseeings_exp.empty:
                             for _, s in df_sightseeings_exp.iterrows():
+                                total = safe_float_exp(s.get('total_amount', 0))
+                                dep = safe_float_exp(s.get('deposit', 0))
+                                rem = total - dep
                                 row += 1
                                 ws_bg.write(row, 0, s['name'], fmt_text_bg)
-                                ws_bg.merge_range(row, 1, row, 2, s['address'], fmt_text_bg)
-                                ws_bg.write(row, 3, s['quantity'], fmt_center_bg)
-                                ws_bg.merge_range(row, 4, row, 5, s['note'], fmt_text_bg)
+                                ws_bg.write(row, 1, s['address'], fmt_text_bg)
+                                ws_bg.write(row, 2, s['quantity'], fmt_center_bg)
+                                ws_bg.write(row, 3, total, money_fmt_bg)
+                                ws_bg.write(row, 4, rem, money_fmt_bg)
+                                ws_bg.write(row, 5, s['note'], fmt_text_bg)
                         else:
                             row += 1; ws_bg.merge_range(row, 0, row, 5, "(Chưa có thông tin)", fmt_center_bg)
 
