@@ -1957,22 +1957,62 @@ def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
     font_name = 'Helvetica'
     font_bold = 'Helvetica-Bold'
     
+    # Danh sách các cặp file font (Thường, Đậm) ưu tiên tìm kiếm
+    # Bạn phải upload các file .ttf này lên cùng thư mục với app.py trên Streamlit Cloud
+    font_candidates = [
+        ("times.ttf", "timesbd.ttf", "TimesNewRoman"),  # Ưu tiên 1
+        ("arial.ttf", "arialbd.ttf", "Arial"),          # Ưu tiên 2
+        ("Roboto-Regular.ttf", "Roboto-Bold.ttf", "Roboto"), # Ưu tiên 3 (Nếu dùng Google Fonts)
+        # Thêm font hệ thống Linux (Streamlit Cloud)
+        ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "DejaVuSans"),
+        ("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", "LiberationSans"),
+    ]
+    
+    font_registered = False
+
     # 1. Ưu tiên tìm font ngay tại thư mục gốc (Streamlit Cloud)
-    # Upload file times.ttf và timesbd.ttf lên github cùng app.py
-    if os.path.exists("times.ttf") and os.path.exists("timesbd.ttf"):
+    for regular, bold, name in font_candidates:
+        if os.path.exists(regular):
+            try:
+                pdfmetrics.registerFont(TTFont(name, regular))
+                font_name = name
+                
+                if os.path.exists(bold):
+                    pdfmetrics.registerFont(TTFont(f'{name}-Bold', bold))
+                    font_bold = f'{name}-Bold'
+                else:
+                    # Nếu không có file đậm, dùng file thường cho đậm (để không lỗi font)
+                    pdfmetrics.registerFont(TTFont(f'{name}-Bold', regular))
+                    font_bold = f'{name}-Bold'
+
+                font_registered = True
+                break
+            except: pass
+
+    # 2. Nếu chưa tìm thấy, thử tìm trong Windows (Dành cho chạy Local)
+    if not font_registered:
         try:
-            pdfmetrics.registerFont(TTFont('TimesNewRoman', "times.ttf"))
-            pdfmetrics.registerFont(TTFont('TimesNewRoman-Bold', "timesbd.ttf"))
-            font_name = 'TimesNewRoman'
-            font_bold = 'TimesNewRoman-Bold'
-        except: pass
-    # 2. Fallback cho Windows Local
-    elif os.path.exists(r"C:\Windows\Fonts\times.ttf"):
-        try:
-            pdfmetrics.registerFont(TTFont('TimesNewRoman', r"C:\Windows\Fonts\times.ttf"))
-            pdfmetrics.registerFont(TTFont('TimesNewRoman-Bold', r"C:\Windows\Fonts\timesbd.ttf"))
-            font_name = 'TimesNewRoman'
-            font_bold = 'TimesNewRoman-Bold'
+            win_path = r"C:\Windows\Fonts\times.ttf"
+            win_path_bd = r"C:\Windows\Fonts\timesbd.ttf"
+            if os.path.exists(win_path):
+                pdfmetrics.registerFont(TTFont('TimesNewRoman', win_path))
+                font_name = 'TimesNewRoman'
+                
+                if os.path.exists(win_path_bd):
+                    pdfmetrics.registerFont(TTFont('TimesNewRoman-Bold', win_path_bd))
+                    font_bold = 'TimesNewRoman-Bold'
+                else:
+                    pdfmetrics.registerFont(TTFont('TimesNewRoman-Bold', win_path))
+                    font_bold = 'TimesNewRoman-Bold'
+            else:
+                # Fallback Arial trên Windows
+                win_arial = r"C:\Windows\Fonts\arial.ttf"
+                if os.path.exists(win_arial):
+                    pdfmetrics.registerFont(TTFont('Arial', win_arial))
+                    font_name = 'Arial'
+                    # Arial thường tự xử lý bold hoặc dùng cùng file
+                    pdfmetrics.registerFont(TTFont('Arial-Bold', win_arial))
+                    font_bold = 'Arial-Bold' 
         except: pass
 
     # --- MÀU SẮC ---
@@ -1993,7 +2033,7 @@ def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
             'confirmed': 'Confirmed', 'cancelled': 'Cancelled',
             'svc_details': 'II. SERVICE DETAILS',
             'svc_details_cont': 'II. SERVICE DETAILS (Cont.)',
-            'tbl_name': 'SERVICE NAME', 'tbl_det': 'DETAILS / ROOM INFO', 'tbl_note': 'NOTE',
+            'tbl_name': 'SERVICE NAME', 'tbl_det': 'DETAILS', 'tbl_note': 'NOTE',
             'guest_list': 'III. GUEST LIST',
             'guest_list_cont': 'III. GUEST LIST (Cont.)',
             'included': 'INCLUDED SERVICES',
@@ -2014,7 +2054,7 @@ def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
             'confirmed': 'Đã xác nhận', 'cancelled': 'Đã hủy',
             'svc_details': 'II. CHI TIẾT DỊCH VỤ',
             'svc_details_cont': 'II. CHI TIẾT DỊCH VỤ (Tiếp)',
-            'tbl_name': 'TÊN DỊCH VỤ', 'tbl_det': 'CHI TIẾT / THÔNG TIN PHÒNG', 'tbl_note': 'GHI CHÚ',
+            'tbl_name': 'TÊN DỊCH VỤ', 'tbl_det': 'THÔNG TIN CHI TIẾT', 'tbl_note': 'GHI CHÚ',
             'guest_list': 'III. DANH SÁCH KHÁCH',
             'guest_list_cont': 'III. DANH SÁCH KHÁCH (Tiếp)',
             'included': 'DỊCH VỤ BAO GỒM',
@@ -2090,6 +2130,32 @@ def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
     check_in = dates[0] if len(dates) > 0 else booking_info.get('created_at', '')
     check_out = dates[1] if len(dates) > 1 else "N/A"
     
+    # --- LOGIC MỚI: TRÍCH XUẤT MÃ ĐẶC THÙ (PHẦN I) ---
+    bk_type = booking_info.get('type', '')
+    specific_label = ""
+    specific_value = ""
+
+    if bk_type == 'HOTEL':
+        if booking_info.get('hotel_code'):
+            specific_label = txt['hotel_code']
+            specific_value = booking_info.get('hotel_code', '')
+    elif bk_type == 'TRANS':
+        # Regex tìm Biển số xe: "Xe ...: [Biển số] |"
+        m_car = re.search(r'(Xe\s*[^:]*:\s*)([^|]+)', details)
+        if m_car:
+            specific_label = "Biển số xe:" if lang == 'vi' else "Car Plate:"
+            specific_value = m_car.group(2).strip()
+        else:
+            # Regex tìm Mã vé: "Vé: [Code] |"
+            m_ticket = re.search(r'(Vé:\s*)([^|]+)', details)
+            if m_ticket:
+                specific_label = "Mã vé:" if lang == 'vi' else "Ticket Code:"
+                specific_value = m_ticket.group(2).strip()
+    
+    # Nếu không tìm thấy trong details, thử tìm trong tên (cho trường hợp Vé máy bay)
+    if bk_type == 'TRANS' and not specific_value and '[' in booking_info['name']:
+         pass # Giữ nguyên logic cũ nếu không extract được
+
     # --- PHẦN 1: THÔNG TIN CHUNG ---
     y -= 40
     c.setFillColor(HexColor(primary_color))
@@ -2097,65 +2163,57 @@ def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
     c.drawString(40, y, txt['gen_info'])
     y -= 20
     
-    # Tính toán chiều cao khung thông tin
-    info_lines = 4
-    if booking_info.get('type') == 'HOTEL' and booking_info.get('hotel_code'):
-        info_lines = 5
-    box_height = info_lines * 25 + 10
+    # Danh sách thông tin (Cân đối lại layout)
+    gen_items = [
+        (txt['attn'], cust_name),
+        (txt['bk_code'], booking_info['code']),
+        (txt['date_created'], booking_info.get('created_at', '')),
+        (txt['created_by'], booking_info.get('sale_name', '')),
+        (txt['svc_date'], check_in),
+    ]
+    if check_out != "N/A":
+        gen_items.append((txt['checkout'], check_out))
+    
+    status_txt = txt['confirmed'] if booking_info.get('status') != 'deleted' else txt['cancelled']
+    gen_items.append((txt['status'], status_txt))
+    
+    if specific_label and specific_value:
+        gen_items.append((specific_label, specific_value))
 
-    # Vẽ khung thông tin
+    # Tính toán chiều cao khung dựa trên số dòng (chia 2 cột)
+    import math
+    rows_needed = math.ceil(len(gen_items) / 2)
+    row_h = 25
+    box_height = rows_needed * row_h + 15
+
+    # Vẽ khung
     c.setStrokeColor(HexColor(line_color))
     c.setLineWidth(1)
     c.rect(40, y - box_height, width - 80, box_height, fill=0)
     
-    c.setFillColor(HexColor(text_color))
-    c.setFont(font_name, 11)
+    # Vẽ nội dung (2 cột)
+    curr_y = y - 25
+    col_x_positions = [50, 300] # Vị trí x cho cột 1 và cột 2
     
-    # Dòng 1: Attention to (Riêng 1 dòng)
-    row_y = y - 25
-    c.drawString(50, row_y, txt['attn'])
-    c.setFont(font_bold, 11); c.drawString(130, row_y, cust_name); c.setFont(font_name, 11)
-    
-    # Dòng 2
-    row_y -= 25
-    c.drawString(50, row_y, txt['bk_code'])
-    c.setFont(font_bold, 11); c.drawString(130, row_y, booking_info['code']); c.setFont(font_name, 11)
-    
-    c.drawString(300, row_y, txt['svc_date'])
-    c.drawString(400, row_y, check_in)
-    
-    # Dòng 3
-    row_y -= 25
-    c.drawString(50, row_y, txt['date_created'])
-    c.drawString(130, row_y, booking_info.get('created_at', ''))
-    
-    if check_out != "N/A":
-        c.drawString(300, row_y, txt['checkout'])
-        c.drawString(400, row_y, check_out)
+    for i, (label, val) in enumerate(gen_items):
+        col_idx = i % 2
+        x_pos = col_x_positions[col_idx]
+        draw_y = curr_y - (i // 2) * row_h
         
-    # Dòng 4
-    row_y -= 25
-    c.drawString(50, row_y, txt['created_by'])
-    c.drawString(130, row_y, booking_info.get('sale_name', ''))
-
-    c.drawString(300, row_y, txt['status'])
-    status_txt = txt['confirmed'] if booking_info.get('status') != 'deleted' else txt['cancelled']
-    c.setFillColor(HexColor("#2E7D32" if status_txt == "Confirmed" else "#C62828"))
-    c.setFont(font_bold, 11)
-    c.drawString(400, row_y, status_txt)
-    c.setFillColor(HexColor(text_color))
-    c.setFont(font_name, 11)
-
-    # Dòng 5 (Nếu có Hotel Code)
-    if info_lines == 5:
-        row_y -= 25
-        c.drawString(50, row_y, txt['hotel_code'])
-        c.setFont(font_bold, 11)
-        c.drawString(130, row_y, booking_info.get('hotel_code', ''))
+        c.setFillColor(HexColor(text_color))
         c.setFont(font_name, 11)
+        c.drawString(x_pos, draw_y, label)
+        
+        c.setFont(font_bold, 11)
+        if label == txt['status']:
+             c.setFillColor(HexColor("#2E7D32" if val == txt['confirmed'] else "#C62828"))
+        
+        # Căn chỉnh giá trị
+        val_x_offset = 100 if col_idx == 0 else 110
+        c.drawString(x_pos + val_x_offset, draw_y, str(val))
 
     # --- PHẦN 2: CHI TIẾT DỊCH VỤ ---
-    y -= (box_height + 40)
+    y -= (box_height + 30)
     c.setFillColor(HexColor(primary_color))
     c.setFont(font_bold, 12)
     c.drawString(40, y, txt['svc_details'])
@@ -2211,22 +2269,26 @@ def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
         r_type = booking_info.get('room_type', '')
         g_list = booking_info.get('guest_list', '')
         
-        # Format lại phần Details
-        # details cũ: "Lưu trú: 01/01 - 03/01 (2 đêm, 1 phòng)"
-        # Regex extract numbers
-        new_details = details
-        if lang == 'en':
-            match = re.search(r'\((\d+)\s+đêm,\s+(\d+)\s+phòng\)', details)
-            if match:
-                nights = match.group(1)
-                rooms = match.group(2)
-                new_details = f"{nights} nights, {rooms} rooms"
-            else:
-                new_details = translate_content(details)
-                
-            if r_type: new_details += f"\nRoom Type: {r_type}"
-        else:
-            if r_type: new_details += f"\nLoại phòng: {r_type}"
+        # --- LOGIC MỚI: TÍNH SỐ ĐÊM & BỎ NGÀY CỤ THỂ ---
+        new_details = ""
+        
+        # Tính số đêm từ dates đã extract ở trên
+        nights_count = 0
+        if len(dates) >= 2:
+            try:
+                d1 = datetime.strptime(dates[0], '%d/%m/%Y')
+                d2 = datetime.strptime(dates[1], '%d/%m/%Y')
+                nights_count = (d2 - d1).days
+            except: pass
+        
+        if nights_count > 0:
+            lbl_night = "nights" if lang == 'en' else "đêm"
+            new_details += f"{nights_count} {lbl_night}"
+        
+        if r_type:
+            lbl_room = "Room Type:" if lang == 'en' else "Loại phòng:"
+            if new_details: new_details += "\n"
+            new_details += f"{lbl_room} {r_type}"
         
         # Format phần Note hoặc thêm vào Details
         note_part = "" # Guest list moved to separate section
@@ -2351,8 +2413,8 @@ def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
     y -= 20
     c.setFillColor(HexColor(text_color))
     c.setFont(font_name, 10)
-    c.drawString(50, y, txt['inc_1'])
-    c.drawString(50, y - 15, txt['inc_2'])
+    # c.drawString(50, y, txt['inc_1']) # Đã bỏ theo yêu cầu
+    c.drawString(50, y, txt['inc_2'])
     
 
     # Signature
@@ -4833,12 +4895,12 @@ def render_booking_management():
                 lang_code = 'vi' if sel_lang == "Tiếng Việt" else 'en'
                 
                 comp_data_cfm = get_company_data()
-                docx_cfm = create_booking_cfm_docx(dict(bk_info), comp_data_cfm, lang=lang_code)
+                pdf_cfm = create_booking_cfm_pdf(dict(bk_info), comp_data_cfm, lang=lang_code)
                 c_dl_btn.download_button(
-                    label="📥 Tải Booking Confirmation (Word)",
-                    data=docx_cfm,
-                    file_name=f"Booking_CFM_{code}.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    label="📥 Tải Booking Confirmation (PDF)",
+                    data=pdf_cfm,
+                    file_name=f"Booking_CFM_{code}.pdf",
+                    mime="application/pdf",
                     type="secondary"
                 )
                 
