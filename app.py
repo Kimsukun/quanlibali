@@ -25,7 +25,6 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from lunardate import LunarDate
-from streamlit_option_menu import option_menu # Thêm import này
 
 # --- QUAN TRỌNG: CẤU HÌNH TRANG PHẢI Ở ĐẦU TIÊN ---
 st.set_page_config(
@@ -904,146 +903,160 @@ def get_tour_financials(tour_id, tour_info):
 # 3. CSS & GIAO DIỆN HIỆN ĐẠI
 # ==========================================
 comp = get_company_data()
-st.markdown("""
-<style>
-    /* --- FONTS & GLOBAL --- */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
-    
-    html, body, [class*="css"] {
-        font-family: 'Inter', sans-serif;
-        color: #1f2937;
-    }
-    
-    /* --- ẨN CÁC THÀNH PHẦN MẶC ĐỊNH CỦA STREAMLIT --- */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    .stDeployButton {visibility: hidden;}
+st.markdown("""<style>
+/* --- BASE & ANIMATION --- */
+@keyframes fadeIn { 0% { opacity: 0; transform: translateY(10px); } 100% { opacity: 1; transform: translateY(0); } }
+.stApp {
+    background-color: #f8f9fa;
+    font-family: 'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    animation: fadeIn 0.5s ease-in-out;
+}
 
-    /* --- SIDEBAR HIỆN ĐẠI --- */
-    section[data-testid="stSidebar"] {
-        background-color: #f8f9fa;
-        border-right: 1px solid #e5e7eb;
-    }
-    
-    /* --- CONTAINER & CARDS --- */
-    .block-container {
-        padding-top: 2rem;
-        padding-bottom: 5rem;
-    }
-    
-    div[data-testid="stVerticalBlock"] > div[style*="flex-direction: column;"] > div[data-testid="stVerticalBlock"] {
-        background-color: white;
-        padding: 1.5rem;
-        border-radius: 12px;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
-        border: 1px solid #f3f4f6;
-        margin-bottom: 1rem;
-    }
+/* --- TYPOGRAPHY & LABELS --- */
+h1, h2, h3, h4, h5, h6 { color: #2c3e50; }
+div[data-testid="stMarkdownContainer"] p { font-weight: 400; white-space: normal; word-break: break-word; }
+.company-info-text p, .report-card p { white-space: normal !important; }
 
-    /* --- METRIC CARDS --- */
-    div[data-testid="stMetric"] {
-        background-color: #ffffff;
-        border: 1px solid #e5e7eb;
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-        transition: transform 0.2s;
-    }
-    div[data-testid="stMetric"]:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-        border-color: #2e7d32;
-    }
-    div[data-testid="stMetricLabel"] {font-size: 0.9rem; color: #6b7280;}
-    div[data-testid="stMetricValue"] {font-size: 1.5rem; color: #111827; font-weight: 700;}
+/* --- MODERN INPUTS --- */
+.stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"], .stTextArea textarea, .stDateInput input {
+    border-radius: 10px !important;
+    border: 1px solid #e0e0e0 !important;
+    padding: 10px 12px !important;
+    background-color: #ffffff !important;
+    transition: all 0.3s;
+    font-size: 0.95rem;
+}
+.stTextInput input:focus, .stNumberInput input:focus, .stTextArea textarea:focus, .stDateInput input:focus {
+    border-color: #56ab2f !important;
+    box-shadow: 0 4px 12px rgba(86, 171, 47, 0.15) !important;
+}
 
-    /* --- BUTTONS --- */
-    .stButton > button {
-        border-radius: 8px;
-        font-weight: 600;
-        border: none;
-        padding: 0.5rem 1rem;
-        transition: all 0.2s ease;
-    }
-    .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #059669 0%, #10b981 100%); /* Xanh lá hiện đại */
-        box-shadow: 0 4px 6px rgba(16, 185, 129, 0.2);
-    }
-    .stButton > button[kind="secondary"] {
-        background-color: #f3f4f6;
-        color: #374151;
-        border: 1px solid #d1d5db;
-    }
-    .stButton > button:hover {
-        transform: scale(1.02);
-        opacity: 0.9;
-    }
+/* --- BUTTONS --- */
+.stButton button {
+    border-radius: 12px !important;
+    font-weight: 600;
+    font-size: 1rem;
+    padding: 0.6rem 1.2rem !important;
+    border: none !important;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    white-space: normal !important;
+    height: auto !important;
+    min-height: 2.5rem;
+}
+.stButton button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 15px rgba(0,0,0,0.1);
+}
+.stButton button[kind="primary"] {
+    background: linear-gradient(90deg, #56ab2f 0%, #a8e063 100%);
+    color: white;
+}
+.stButton button[kind="secondary"] {
+    background-color: #f1f3f5;
+    color: #333;
+}
 
-    /* --- INPUT FIELDS --- */
-    .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"], .stTextArea textarea, .stDateInput input {
-        border-radius: 8px !important;
-        border: 1px solid #d1d5db !important;
-        background-color: #f9fafb !important; 
-    }
-    .stTextInput input:focus, .stNumberInput input:focus {
-        border-color: #059669 !important;
-        background-color: #ffffff !important;
-        box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.1) !important;
-    }
+/* --- COMPANY HEADER --- */
+.company-header-container {
+    display: flex; align-items: center; justify-content: center; gap: 30px;
+    padding: 25px 40px; background: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(10px); border-radius: 20px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.05); margin-bottom: 30px;
+    border: 1px solid rgba(255,255,255,0.3); flex-wrap: nowrap !important;
+}
+.company-logo-img { height: 70px; width: auto; object-fit: contain; flex-shrink: 0; }
+.company-info-text { text-align: left; flex: 1; display: flex; flex-direction: column; justify-content: center; white-space: normal; }
+.company-info-text h1 { margin: 0; font-size: 1.8rem; color: #2e7d32; font-weight: 800; line-height: 1.2; }
+.company-info-text p { margin: 5px 0 0 0; color: #555; font-size: 0.9rem; font-weight: 500; display: flex; align-items: center; gap: 10px; }
 
-    /* --- TABS --- */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 24px;
-        border-bottom: 1px solid #e5e7eb;
-    }
-    .stTabs [data-baseweb="tab"] {
-        height: 50px;
-        white-space: pre-wrap;
-        background-color: transparent;
-        border-radius: 0;
-        color: #6b7280;
-        font-weight: 500;
-    }
-    .stTabs [aria-selected="true"] {
-        color: #059669;
-        border-bottom: 2px solid #059669;
-    }
-    
-    /* --- CUSTOM HEADER --- */
-    .header-style {
-        background: linear-gradient(90deg, #ecfdf5 0%, #ffffff 100%);
-        padding: 1.5rem;
-        border-radius: 12px;
-        border: 1px solid #a7f3d0;
-        display: flex;
-        align-items: center;
-        gap: 20px;
-        margin-bottom: 2rem;
-    }
-    .header-title {
-        color: #065f46;
-        font-weight: 800;
-        font-size: 1.8rem;
-        margin: 0;
-    }
-    .header-subtitle {
-        color: #047857;
-        font-size: 0.95rem;
-        margin: 0;
-    }
-    
-    /* --- LEGACY SUPPORT (DO NOT REMOVE) --- */
-    .company-header-container { display: flex; align-items: center; gap: 20px; margin-bottom: 20px; }
-    .company-logo-img { height: 60px; width: auto; }
-    .company-info-text h1 { margin: 0; color: #059669; }
-    .money-box { background: #059669; color: white; padding: 20px; border-radius: 10px; text-align: center; font-size: 24px; font-weight: bold; margin: 20px 0; }
-    .report-card { background: white; padding: 15px; border-radius: 10px; border: 1px solid #e5e7eb; margin-bottom: 10px; }
-    .finance-summary-card { background: #f9fafb; padding: 15px; border-radius: 10px; border: 1px solid #e5e7eb; }
-    .profit-summary-card { background: #ecfdf5; padding: 15px; border-radius: 10px; border: 1px solid #a7f3d0; text-align: center; }
-    .profit-summary-card .formula { font-size: 1.5rem; font-weight: bold; color: #065f46; }
-</style>
-""", unsafe_allow_html=True)
+/* --- CARD STYLES --- */
+.report-card, .login-container {
+    background-color: white; border: none; border-radius: 20px;
+    padding: 25px; margin-bottom: 25px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.04);
+    transition: all 0.3s ease;
+}
+.report-card:hover { transform: translateY(-5px); box-shadow: 0 20px 40px rgba(0,0,0,0.08); }
+
+/* --- MONEY BOX --- */
+.money-box {
+    background: linear-gradient(135deg, #00b09b, #96c93d) !important;
+    color: #ffffff !important; padding: 25px; border-radius: 20px;
+    box-shadow: 0 15px 30px -5px rgba(0, 176, 155, 0.3);
+    font-size: clamp(1.2rem, 3vw, 2.5rem); font-weight: 800;
+    text-align: center; margin: 1.5rem 0; width: 100%;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.1); letter-spacing: 1px;
+    white-space: normal; word-wrap: break-word;
+    transition: transform 0.3s ease;
+}
+.money-box:hover { transform: scale(1.02); }
+
+/* --- MODERN TABS --- */
+div[data-baseweb="tab-list"] { border-bottom: 2px solid #e0e0e0; }
+button[data-baseweb="tab"] {
+    background-color: transparent !important; border-bottom: 2px solid transparent !important;
+    padding-bottom: 10px !important; margin-bottom: -2px !important; transition: all 0.3s !important;
+}
+button[data-baseweb="tab"]:hover { background-color: #f1f3f5 !important; }
+button[aria-selected="true"] {
+    border-bottom-color: #56ab2f !important; font-weight: 600; color: #56ab2f !important;
+}
+
+/* --- ENHANCED EXPANDER --- */
+div[data-testid="stExpander"] {
+    border: 1px solid #e0e0e0 !important; border-radius: 15px !important;
+    overflow: hidden; box-shadow: none !important; background-color: #fff;
+}
+div[data-testid="stExpander"] > details > summary {
+    font-weight: 600; font-size: 1.05rem; background-color: #fafafa;
+    padding: 0.75rem 1rem !important;
+}
+div[data-testid="stExpander"] > details > summary:hover { background-color: #f1f3f5; }
+
+/* --- DATA EDITOR --- */
+div[data-testid="stDataEditor"] {
+    border-radius: 15px; overflow: hidden;
+    border: 1px solid #f0f0f0; box-shadow: 0 4px 12px rgba(0,0,0,0.03);
+}
+
+/* --- FINANCE SUMMARY CARDS --- */
+.finance-summary-card {
+    background-color: #ffffff; border: 1px solid #e9ecef; border-radius: 15px;
+    padding: 20px; margin-top: 15px;
+}
+.finance-summary-card .row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 0; border-bottom: 1px solid #f1f3f5;
+}
+.finance-summary-card .row:last-child { border-bottom: none; }
+.finance-summary-card .row span { color: #495057; }
+.finance-summary-card .row b { color: #212529; }
+.finance-summary-card .total-row {
+    font-size: 1.2em; font-weight: bold; color: #2e7d32; padding-top: 15px;
+}
+.finance-summary-card .pax-price {
+    text-align: right; font-size: 0.9em; color: #6c757d; margin-top: 5px;
+}
+.profit-summary-card {
+    background-color: #e3f2fd; padding: 20px; border-radius: 15px;
+    text-align: center; border: 1px solid #90caf9; margin-top: 10px;
+}
+.profit-summary-card h3 {
+    margin: 0; color: #1565c0; font-size: 1.1rem; font-weight: 600;
+}
+.profit-summary-card .formula {
+    font-size: 1.8em; font-weight: bold; color: #1e88e5; margin-top: 10px;
+}
+.profit-summary-card .formula .result { color: #d32f2f; }
+
+/* --- RESPONSIVE --- */
+@media only screen and (max-width: 600px) {
+    .company-header-container { flex-direction: column; text-align: center; gap: 10px; flex-wrap: wrap !important; }
+    .company-info-text { text-align: center; }
+    .company-info-text p { justify-content: center; }
+}
+</style>""", unsafe_allow_html=True)
 
 def convert_image_to_pdf(image_file):
     try:
@@ -2955,116 +2968,140 @@ def render_dashboard():
 # ==========================================
 
 def render_login_page(comp):
-    # --- CSS MỚI: ÉP STYLE TRỰC TIẾP VÀO FORM STREAMLIT ---
+    # 1. --- PHẦN STYLE (CSS) - LỚP VỎ ĐẸP NHƯ HTML ---
     st.markdown("""
         <style>
-            /* 1. Nền trang web */
-            .stApp {
-                background-color: #F2F4F8;
-            }
+            /* Nhúng Font chữ Google (Roboto) cho hiện đại */
+            @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
             
-            /* Ẩn Sidebar và Header mặc định */
-            section[data-testid="stSidebar"] {display: none;}
-            header {visibility: hidden;}
-            
-            /* 2. Biến Form đăng nhập thành cái Card đẹp */
-            div[data-testid="stForm"] {
-                background-color: white;
-                padding: 40px;
-                border-radius: 20px;
-                box-shadow: 0 10px 30px rgba(0,0,0,0.1); /* Đổ bóng */
-                border: none; /* Bỏ viền xám mặc định */
+            html, body, [class*="css"] {
+                font-family: 'Roboto', sans-serif;
             }
 
-            /* 3. Chỉnh ô nhập liệu (Input) */
-            div[data-testid="stTextInput"] input {
-                border-radius: 10px !important;
-                padding: 10px 15px !important;
-                border: 1px solid #E0E0E0 !important;
-                background-color: #FAFAFA !important;
-                color: #333 !important;
+            /* Nền trang web */
+            .stApp {
+                background-color: #f0f2f5; /* Màu xám nhạt của Facebook/Bootstrap */
+                background-image: url("https://img.freepik.com/free-vector/white-abstract-background-design_23-2148825582.jpg");
+                background-size: cover;
             }
-            /* Khi bấm vào ô nhập liệu: Viền chuyển màu xanh đậm */
+
+            /* Ẩn các thành phần thừa của Streamlit */
+            header {visibility: hidden;}
+            section[data-testid="stSidebar"] {display: none;}
+            
+            /* TẠO KHUNG LOGIN (CARD) */
+            div[data-testid="stForm"] {
+                background: rgba(255, 255, 255, 0.95); /* Trắng mờ */
+                padding: 50px 40px;
+                border-radius: 20px;
+                box-shadow: 0 15px 35px rgba(0,0,0,0.1); /* Đổ bóng sâu 3D */
+                width: 100%;
+                border: 1px solid white;
+            }
+
+            /* CHỈNH Ô NHẬP LIỆU (INPUT) GIỐNG BOOTSTRAP */
+            div[data-testid="stTextInput"] {
+                margin-bottom: 15px;
+            }
+            div[data-testid="stTextInput"] label {
+                font-size: 14px;
+                color: #555;
+                font-weight: 500;
+                margin-bottom: 8px;
+            }
+            div[data-testid="stTextInput"] input {
+                border-radius: 8px !important;
+                padding: 12px 15px !important;
+                border: 1px solid #ced4da !important; /* Viền xám chuẩn Bootstrap */
+                color: #495057 !important;
+                background-color: #fff !important;
+                transition: all 0.2s;
+            }
+            /* Hiệu ứng khi bấm vào ô nhập */
             div[data-testid="stTextInput"] input:focus {
                 border-color: #0e0259 !important; 
-                box-shadow: 0 0 0 2px rgba(14, 2, 89, 0.2) !important;
+                box-shadow: 0 0 0 0.2rem rgba(14, 2, 89, 0.25) !important; /* Hào quang xanh */
             }
 
-            /* 4. Nút bấm Đăng nhập (QUAN TRỌNG: Selector này chuẩn cho Form) */
+            /* CHỈNH NÚT BẤM (BUTTON) */
             div[data-testid="stFormSubmitButton"] button {
                 width: 100%;
-                border-radius: 10px !important;
-                height: 48px;
-                background-color: #0e0259 !important; /* Màu xanh đậm bạn yêu cầu */
+                background-color: #0e0259 !important;
                 color: white !important;
-                font-weight: 600 !important;
+                padding: 12px 20px !important;
+                font-size: 16px !important;
+                border-radius: 30px !important; /* Bo tròn kiểu viên thuốc */
                 border: none !important;
+                font-weight: 700 !important;
+                letter-spacing: 1px;
+                margin-top: 10px;
                 box-shadow: 0 4px 10px rgba(14, 2, 89, 0.3);
-                transition: all 0.3s ease;
             }
             div[data-testid="stFormSubmitButton"] button:hover {
                 background-color: #1a0b7e !important; /* Sáng hơn chút khi di chuột */
-                transform: translateY(-2px);
+                transform: translateY(-2px); /* Nhẹ nhàng bay lên */
+                box-shadow: 0 6px 12px rgba(14, 2, 89, 0.4);
             }
-            
-            /* Căn giữa Tab */
+
+            /* Tinh chỉnh Tab */
             div[data-baseweb="tab-list"] {
-                justify-content: center;
+                background-color: transparent;
                 margin-bottom: 20px;
-                border-bottom: none !important;
+                border-bottom: 2px solid #e9ecef;
             }
-            /* Tab được chọn */
-            button[data-baseweb="tab"][aria-selected="true"] {
-                background-color: transparent !important;
-                color: #0e0259 !important;
+            button[data-baseweb="tab"] {
                 font-weight: bold !important;
-                border-bottom: 3px solid #0e0259 !important;
+                font-size: 16px;
             }
         </style>
     """, unsafe_allow_html=True)
 
-    # --- BỐ CỤC CĂN GIỮA ---
-    # Chia 3 cột, nội dung nằm ở cột giữa
-    col_l, col_center, col_r = st.columns([1, 1.2, 1])
+    # 2. --- PHẦN LOGIC (PYTHON) - BỘ NÃO ---
+    
+    # Chia cột để căn giữa màn hình (Cột trái trống - Cột giữa Login - Cột phải trống)
+    col1, col2, col3 = st.columns([1, 1, 1]) 
 
-    with col_center:
-        # Khoảng trống phía trên để đẩy card xuống giữa màn hình
+    with col2:
+        # Khoảng cách phía trên
         st.write("") 
         st.write("") 
-
-        # 1. Logo & Tên Công Ty (Nằm ngoài form cho thoáng)
+        
+        # LOGO CÔNG TY
         if comp['logo_b64_str']:
-            st.markdown(f'''
-                <div style="display: flex; flex-direction: column; align-items: center; margin-bottom: 20px;">
-                    <img src="data:image/png;base64,{comp["logo_b64_str"]}" style="height: 80px; width: auto; object-fit: contain; margin-bottom: 15px;">
-                    <h3 style="color: #0e0259; margin: 0; text-align: center; font-size: 22px;">{comp['name']}</h3>
-                    <p style="color: #666; font-size: 14px;">Hệ thống quản lý nội bộ</p>
+             st.markdown(f'''
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <img src="data:image/png;base64,{comp["logo_b64_str"]}" style="width: 100px; height: auto;">
+                    <h2 style="color: #0e0259; margin-top: 10px; font-weight: 700;">{comp['name']}</h2>
+                    <p style="color: #6c757d; font-size: 14px;">Welcome back! Please login to your account.</p>
                 </div>
             ''', unsafe_allow_html=True)
         else:
-            st.markdown(f"""<h2 style='text-align: center; color: #0e0259;'>{comp['name']}</h2>""", unsafe_allow_html=True)
+             st.markdown(f'''<h2 style="text-align: center; color: #0e0259;">{comp['name']}</h2>''', unsafe_allow_html=True)
 
-        # 2. Khu vực Form (Login / Register)
+        # TAB CHUYỂN ĐỔI
         tab_login, tab_reg = st.tabs(["ĐĂNG NHẬP", "ĐĂNG KÝ"])
-        
+
         with tab_login:
-            # Form này sẽ tự nhận CSS data-testid="stForm" ở trên
+            # Dùng st.form để gom nhóm input và nút bấm
             with st.form("login_form"):
-                st.write("") # Spacer nhỏ
-                u = st.text_input("Tên đăng nhập", placeholder="Nhập username...", label_visibility="collapsed")
-                p = st.text_input("Mật khẩu", type="password", placeholder="Nhập mật khẩu...", label_visibility="collapsed")
-                st.write("") # Spacer
+                # Input Python (đã được CSS ở trên làm đẹp)
+                u = st.text_input("Username", placeholder="Nhập tên đăng nhập")
+                p = st.text_input("Password", type="password", placeholder="Nhập mật khẩu")
                 
-                # Nút Submit (Sẽ nhận CSS màu #0e0259)
-                submitted = st.form_submit_button("ĐĂNG NHẬP")
+                st.write("") # Khoảng trắng nhỏ
                 
+                # Nút bấm Python
+                submitted = st.form_submit_button("LOGIN")
+                
+                # Xử lý Logic khi bấm nút
                 if submitted:
                     if not u or not p:
-                        st.warning("Vui lòng nhập đầy đủ thông tin!")
+                        st.error("⚠️ Vui lòng nhập đầy đủ thông tin!")
                     else:
                         pw_hash = hash_pass(p)
-                        df_users = load_table('users') 
+                        df_users = load_table('users')
                         
+                        # Kiểm tra trong Database
                         if not df_users.empty:
                             mask = (df_users['username'] == u) & (df_users['password'] == pw_hash)
                             user_found = df_users.loc[mask]
@@ -3076,41 +3113,38 @@ def render_login_page(comp):
                                         "name": user_found.iloc[0]['username'],
                                         "role": user_found.iloc[0]['role']
                                     }
-                                    st.success("Đăng nhập thành công!")
+                                    st.success("Login thành công!")
                                     time.sleep(0.5)
                                     st.rerun()
                                 else:
-                                    st.error("🚫 Tài khoản chưa được duyệt!")
+                                    st.error("🚫 Tài khoản đang chờ duyệt!")
                             else:
-                                st.error("❌ Sai thông tin đăng nhập!")
+                                st.error("❌ Sai tên đăng nhập hoặc mật khẩu!")
                         else:
                             st.error("⚠️ Lỗi kết nối dữ liệu!")
 
         with tab_reg:
             with st.form("reg_form"):
-                st.write("")
-                nu = st.text_input("Tên đăng nhập mới", placeholder="Chọn username...", label_visibility="collapsed")
-                np = st.text_input("Mật khẩu mới", type="password", placeholder="Tạo mật khẩu...", label_visibility="collapsed")
-                st.write("")
+                st.markdown("<p style='text-align: center; color: #666;'>Tạo tài khoản mới cho nhân viên</p>", unsafe_allow_html=True)
+                nu = st.text_input("New Username", placeholder="Tên đăng nhập mong muốn")
+                np = st.text_input("New Password", type="password", placeholder="Mật khẩu mong muốn")
                 
-                if st.form_submit_button("GỬI YÊU CẦU"):
+                if st.form_submit_button("REGISTER"):
                     if not nu or not np:
-                        st.warning("Nhập đủ thông tin nhé!")
+                        st.warning("Vui lòng nhập đủ thông tin!")
                     else:
                         try:
-                            # Kiểm tra trùng user
                             conn = get_connection()
                             exist = run_query("SELECT id FROM users WHERE username=?", (nu,), fetch_one=True)
                             if exist:
-                                st.error("Tên này đã tồn tại!")
+                                st.error("Tên đăng nhập đã tồn tại!")
                             else:
                                 add_row_to_table('users', {'username': nu, 'password': hash_pass(np), 'role': 'user', 'status': 'pending'})
-                                st.success("✅ Đã gửi yêu cầu! Vui lòng báo Admin duyệt.")
+                                st.success("✅ Đăng ký thành công! Vui lòng chờ Admin duyệt.")
                         except Exception as e:
                             st.error(f"Lỗi: {e}")
 
-        # Footer
-        st.markdown("<p style='text-align: center; color: #999; font-size: 12px; margin-top: 30px;'>© 2026 Bali Tourist System</p>", unsafe_allow_html=True)
+        st.markdown("<div style='text-align: center; margin-top: 30px; color: #adb5bd; font-size: 12px;'>© 2026 Bali Tourist Platform</div>", unsafe_allow_html=True)
 
 def render_admin_notifications():
     st.divider()
@@ -3292,64 +3326,21 @@ def render_admin_panel(comp):
 
 def render_sidebar(comp):
     with st.sidebar:
-        # Logo (Giữ nguyên)
-        if comp['logo_b64_str']: 
-            st.markdown(f'<div style="text-align:center; margin-bottom:20px;"><img src="data:image/png;base64,{comp["logo_b64_str"]}" width="140" style="border-radius:10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);"></div>', unsafe_allow_html=True)
+        if comp['logo_b64_str']: st.markdown(f'<div style="text-align:center; margin-bottom:20px;"><img src="data:image/png;base64,{comp["logo_b64_str"]}" width="120" style="border-radius:10px;"></div>', unsafe_allow_html=True)
         
-        # User Info Card (Làm đẹp hơn)
         user_info = st.session_state.get("user_info")
-        if user_info:
-            st.markdown(f"""
-            <div style="background-color: #ecfdf5; padding: 12px; border-radius: 8px; border: 1px solid #a7f3d0; margin-bottom: 20px; text-align: center;">
-                <div style="font-weight: bold; color: #065f46;">👤 {user_info.get('name', 'User')}</div>
-                <div style="font-size: 0.8em; color: #047857; text-transform: uppercase;">{user_info.get('role', 'staff')}</div>
-            </div>
-            """, unsafe_allow_html=True)
+        if user_info and isinstance(user_info, dict):
+            st.success(f"Xin chào **{user_info.get('name', 'User')}** 👋")
         else:
             st.session_state.logged_in = False
             st.rerun()
         
-        # MENU MỚI (Thay thế selectbox cũ)
-        module = option_menu(
-            None,
-            ["Trang Chủ", "Lịch Thông Báo", "Quản Lý Booking", "Kiểm Soát Chi Phí", "Quản Lý Công Nợ", "Quản Lý Tour", "Khách Hàng", "Nhân Sự", "Tra cứu"],
-            icons=['house', 'calendar-check', 'bookmark-star', 'cash-coin', 'credit-card', 'box-seam', 'people', 'person-badge', 'search'],
-            menu_icon="cast",
-            default_index=0,
-            styles={
-                "container": {"padding": "0!important", "background-color": "transparent"},
-                "icon": {"color": "#6b7280", "font-size": "18px"}, 
-                "nav-link": {
-                    "font-family": "Inter, sans-serif", 
-                    "font-size": "15px", 
-                    "text-align": "left", 
-                    "margin": "4px 0px", 
-                    "padding": "10px 15px",
-                    "border-radius": "8px",
-                    "--hover-color": "#f3f4f6",
-                    "color": "#374151"
-                },
-                "nav-link-selected": {
-                    "background-color": "#059669", 
-                    "color": "white",
-                    "font-weight": "600",
-                    "box-shadow": "0 2px 4px rgba(0,0,0,0.1)"
-                },
-            }
-        )
+        st.markdown("### 🗂️ Phân Hệ Quản Lý")
+        module = st.selectbox("Chọn chức năng:", ["🏠 Trang Chủ", "📅 Lịch Thông Báo", "🔖 Quản Lý Booking", "💰 Kiểm Soát Chi Phí", "💳 Quản Lý Công Nợ", "📦 Quản Lý Tour ", "🤝 Quản Lý Khách Hàng", "👥 Quản Lý Nhân Sự", "🔍 Tra cứu thông tin"], label_visibility="collapsed")
         
-        # Mapping lại tên module cũ để code phía dưới vẫn chạy
-        module_map = {
-            "Trang Chủ": "🏠 Trang Chủ",
-            "Lịch Thông Báo": "📅 Lịch Thông Báo",
-            "Quản Lý Booking": "🔖 Quản Lý Booking",
-            "Kiểm Soát Chi Phí": "💰 Kiểm Soát Chi Phí",
-            "Quản Lý Công Nợ": "💳 Quản Lý Công Nợ",
-            "Quản Lý Tour": "📦 Quản Lý Tour ", # Lưu ý khoảng trắng ở cuối trong code gốc của bạn
-            "Khách Hàng": "🤝 Quản Lý Khách Hàng",
-            "Nhân Sự": "👥 Quản Lý Nhân Sự",
-            "Tra cứu": "🔍 Tra cứu thông tin"
-        }
+        menu = None
+        if module == "💰 Kiểm Soát Chi Phí":
+            menu = st.radio("Menu", ["1. Nhập Hóa Đơn", "2. Báo Cáo Tổng Hợp"])
         
         if st.session_state.user_info and st.session_state.user_info.get('role') in ['admin', 'admin_f1']:
             render_admin_notifications()
@@ -3397,7 +3388,7 @@ def render_sidebar(comp):
                 except Exception as e:
                     st.error(f"❌ Lỗi: {str(e)}")
                     st.info("💡 Gợi ý: Kiểm tra file service_account.json hoặc quyền chia sẻ của Sheet/Folder.")
-    return module_map.get(module, "🏠 Trang Chủ"), None # Menu con xử lý ở main view
+    return module, menu
 
 # --- HÀM HIỂN THỊ SO SÁNH CHI PHÍ (UNC vs HÓA ĐƠN) ---
 def render_cost_comparison(code):
@@ -3807,7 +3798,7 @@ def render_cost_control(menu):
                 
                 def get_status_note(row): # type: ignore
                     if row['status'] == 'deleted': # type: ignore
-                        return "🗑️ Đã xóa"
+                        return "❌ Đã xóa"
                     note = ""
                     if row['request_edit'] == 1: # type: ignore
                         note += "⏳ Chờ duyệt"
@@ -3835,11 +3826,7 @@ def render_cost_control(menu):
                         "Loại": st.column_config.TextColumn(disabled=True),
                         "Số HĐ": st.column_config.TextColumn(disabled=True),
                         "Tổng Tiền": st.column_config.TextColumn(disabled=True),
-                        "Trạng thái": st.column_config.TextColumn(
-                            "Trạng thái",
-                            width="small",
-                            disabled=True
-                        ),
+                        "Trạng thái": st.column_config.TextColumn(disabled=True),
                         "Ghi chú": st.column_config.TextColumn(disabled=True),
                     },
                     hide_index=True,
@@ -5281,6 +5268,13 @@ def render_tour_management():
                 st.session_state.current_tour_id_est = tour_id
                 if "est_df_temp" in st.session_state: del st.session_state.est_df_temp
                 st.session_state.est_editor_key += 1
+                
+                # [NEW] Reset price values in session state
+                t_dict_init = dict(tour_info)
+                fp = float(t_dict_init.get('final_tour_price', 0) or 0)
+                cp = float(t_dict_init.get('child_price', 0) or 0)
+                st.session_state.est_final_price_val = "{:,.0f}".format(fp).replace(",", ".") + " VND"
+                st.session_state.est_child_price_val = "{:,.0f}".format(cp).replace(",", ".") + " VND"
             
             # --- IMPORT EXCEL (MỚI - DỰ TOÁN) ---
             with st.expander("📥 Nhập dữ liệu từ Excel (Import)", expanded=False):
@@ -5420,8 +5414,8 @@ def render_tour_management():
                     "unit_price": st.column_config.TextColumn("Đơn giá (VND)", required=False),
                     "quantity": st.column_config.NumberColumn("Số lượng", min_value=0),
                     "times": st.column_config.NumberColumn("Số lần", min_value=1),
-                    "price_per_pax": st.column_config.TextColumn("Giá/Pax", disabled=True),
-                    "total_display": st.column_config.TextColumn("Tổng chi phí", disabled=True),
+                    "price_per_pax": st.column_config.TextColumn("Giá/Pax", disabled=False),
+                    "total_display": st.column_config.TextColumn("Tổng chi phí", disabled=False),
                     "total_val": st.column_config.NumberColumn("Hidden", disabled=True),
                 },
                 column_order=("category", "description", "unit", "unit_price", "quantity", "times", "price_per_pax", "total_display"),
@@ -5444,11 +5438,53 @@ def render_tour_management():
                 df_new['quantity'] = pd.to_numeric(df_new['quantity'], errors='coerce').fillna(0)
                 if 'times' not in df_new.columns: df_new['times'] = 1
                 df_new['times'] = pd.to_numeric(df_new['times'], errors='coerce').fillna(1)
+
+                # [NEW] Logic xử lý sửa Tổng tiền / Giá Pax
+                df_new['total_val_edit'] = df_new['total_display'].apply(clean_vnd_auto)
+                df_new['pax_val_edit'] = df_new['price_per_pax'].apply(clean_vnd_auto)
+                
+                df_old = st.session_state.est_df_temp.copy()
+                df_old.index = pd.RangeIndex(start=1, stop=len(df_old) + 1)
+                if 'times' not in df_old.columns: df_old['times'] = 1
+                
+                guest_cnt = tour_info['guest_count'] if tour_info['guest_count'] else 1
+
+                for idx, row in df_new.iterrows():
+                    n_unit = row['unit_price']
+                    n_qty = row['quantity']
+                    n_times = row['times']
+                    n_total_edit = row['total_val_edit']
+                    n_pax_edit = row['pax_val_edit']
+                    
+                    o_unit = 0.0
+                    o_qty = 0.0
+                    o_times = 1.0
+                    
+                    if idx in df_old.index:
+                        o_unit = df_old.loc[idx, 'unit_price']
+                        o_qty = df_old.loc[idx, 'quantity']
+                        o_times = df_old.loc[idx, 'times']
+                    
+                    unit_changed = abs(n_unit - o_unit) > 0.1
+                    
+                    old_total = o_unit * o_qty * o_times
+                    total_changed = abs(n_total_edit - old_total) > 0.1
+                    
+                    old_pax = old_total / guest_cnt
+                    pax_changed = abs(n_pax_edit - old_pax) > 0.1
+                    
+                    if unit_changed:
+                        pass 
+                    elif total_changed:
+                        if n_qty * n_times != 0:
+                            df_new.at[idx, 'unit_price'] = n_total_edit / (n_qty * n_times)
+                    elif pax_changed:
+                        new_total = n_pax_edit * guest_cnt
+                        if n_qty * n_times != 0:
+                            df_new.at[idx, 'unit_price'] = new_total / (n_qty * n_times)
                 
                 # So sánh với dữ liệu cũ
                 cols_check = ['category', 'description', 'unit', 'unit_price', 'quantity', 'times']
-                df_old = st.session_state.est_df_temp.copy()
-                if 'times' not in df_old.columns: df_old['times'] = 1
                 
                 # Reset index và fillna để so sánh
                 df_new_check = df_new[cols_check].reset_index(drop=True).fillna(0)
@@ -5502,13 +5538,34 @@ def render_tour_management():
             # --- THÊM Ô NHẬP GIÁ CHỐT & GIÁ TRẺ EM ---
             st.write("")
             t_dict: Dict[str, Any] = dict(tour_info) if tour_info else {}
+            
+            # Ensure session state is initialized if not present
+            if "est_final_price_val" not in st.session_state:
+                cur_final_price = float(t_dict.get('final_tour_price', 0) or 0)
+                st.session_state.est_final_price_val = "{:,.0f}".format(cur_final_price).replace(",", ".") + " VND"
+            if "est_child_price_val" not in st.session_state:
+                cur_child_price = float(t_dict.get('child_price', 0) or 0)
+                st.session_state.est_child_price_val = "{:,.0f}".format(cur_child_price).replace(",", ".") + " VND"
+
+            def fmt_est_final_price():
+                val = st.session_state.est_final_price_val
+                try:
+                    v_float = float(val.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                    st.session_state.est_final_price_val = "{:,.0f}".format(v_float).replace(",", ".") + " VND"
+                except: pass
+
+            def fmt_est_child_price():
+                val = st.session_state.est_child_price_val
+                try:
+                    v_float = float(val.replace('.', '').replace(',', '').replace(' VND', '').strip())
+                    st.session_state.est_child_price_val = "{:,.0f}".format(v_float).replace(",", ".") + " VND"
+                except: pass
+
             c_final_p, c_child_p = st.columns(2)
             with c_final_p:
-                # Giá chốt tour - Text Input for dots formatting
-                cur_final_price = float(t_dict.get('final_tour_price', 0) or 0)
-                cur_final_price_str = "{:,.0f}".format(cur_final_price).replace(",", ".")
-                final_tour_price_input = st.text_input("Giá chốt tour (VND)", value=cur_final_price_str, disabled=is_disabled, help="Nhập số tiền (VD: 1.000.000)")
-                try: final_tour_price_val = float(final_tour_price_input.replace('.', '').replace(',', ''))
+                # Giá chốt tour
+                st.text_input("Giá chốt tour (VND)", key="est_final_price_val", on_change=fmt_est_final_price, disabled=is_disabled, help="Nhập số tiền (VD: 1.000.000)")
+                try: final_tour_price_val = float(st.session_state.est_final_price_val.replace('.', '').replace(',', '').replace(' VND', '').strip())
                 except: final_tour_price_val = 0.0
 
                 # Số lượng người lớn
@@ -5517,11 +5574,9 @@ def render_tour_management():
                 final_qty_val = st.number_input("Số lượng người lớn", value=cur_qty, min_value=0.0, step=1.0, disabled=is_disabled)
 
             with c_child_p:
-                # Giá trẻ em - Text Input
-                cur_child_price = float(t_dict.get('child_price', 0) or 0)
-                cur_child_price_str = "{:,.0f}".format(cur_child_price).replace(",", ".")
-                child_price_input = st.text_input("Giá trẻ em (VND)", value=cur_child_price_str, disabled=is_disabled)
-                try: child_price_val = float(child_price_input.replace('.', '').replace(',', ''))
+                # Giá trẻ em
+                st.text_input("Giá trẻ em (VND)", key="est_child_price_val", on_change=fmt_est_child_price, disabled=is_disabled)
+                try: child_price_val = float(st.session_state.est_child_price_val.replace('.', '').replace(',', '').replace(' VND', '').strip())
                 except: child_price_val = 0.0
 
                 cur_child_qty = float(t_dict.get('child_qty', 0))
@@ -5529,6 +5584,9 @@ def render_tour_management():
             
             total_final_manual = (final_tour_price_val * final_qty_val) + (child_price_val * child_qty_val)
             st.markdown(f"""<div style="background-color: #e8f5e9; padding: 15px; border-radius: 10px; margin-top: 10px; border: 1px solid #c8e6c9;"><div style="display:flex; justify-content:space-between; font-size: 1.3em; color: #2e7d32;"><span><b>TỔNG DOANH THU</b></span> <b>{format_vnd(total_final_manual)} VND</b></div></div>""", unsafe_allow_html=True)
+
+            est_profit_manual = total_final_manual - total_cost
+            st.markdown(f"""<div style="background-color: #e3f2fd; padding: 15px; border-radius: 10px; margin-top: 10px; border: 1px solid #90caf9;"><div style="display:flex; justify-content:space-between; font-size: 1.3em; color: #1565c0;"><span><b>TỔNG LỢI NHUẬN</b></span> <b>{format_vnd(est_profit_manual)} VND</b></div></div>""", unsafe_allow_html=True)
 
             # --- EXPORT EXCEL ---
             st.write("")
@@ -5772,10 +5830,11 @@ def render_tour_management():
                 return float(x.replace('.', '').replace(',', '').replace(' VND', '').strip()) if x.strip() else 0.0
             return 0.0
 
-        def clean_df_cols(df, cols):
-            for col in cols:
-                if col in df.columns:
-                    df[col] = df[col].apply(clean_vnd_val)
+        # Hàm chuẩn hóa và tính toán lại cột Còn lại
+        def recalc_remaining(df, total_col='total_amount', dep_col='deposit', rem_col='remaining'):
+            df[total_col] = df[total_col].apply(clean_vnd_val)
+            df[dep_col] = df[dep_col].apply(clean_vnd_val)
+            df[rem_col] = df[total_col] - df[dep_col]
             return df
 
         selected_tour_ls_label = st.selectbox("Chọn Đoàn:", list(tour_options.keys()) if tour_options else [], key="sel_tour_ls")
@@ -5942,58 +6001,40 @@ def render_tour_management():
                 st.markdown("##### 2. Danh sách phòng Khách sạn")
                 df_hotels = st.session_state.ls_hotels_temp.copy()
                 
-                # Calculate remaining for display
-                df_hotels['total_amount'] = pd.to_numeric(df_hotels['total_amount'], errors='coerce').fillna(0)
-                df_hotels['deposit'] = pd.to_numeric(df_hotels['deposit'], errors='coerce').fillna(0)
-                df_hotels['remaining'] = df_hotels['total_amount'].fillna(0) - df_hotels['deposit'].fillna(0)
+                # Tính toán hiển thị ban đầu
+                df_hotels = recalc_remaining(df_hotels)
 
-                # Thay thế phần st.data_editor cũ bằng config chi tiết hơn
                 edited_hotels = st.data_editor(
                     df_hotels,
                     num_rows="dynamic",
                     key="hotel_editor",
                     column_config={
-                        "hotel_name": st.column_config.TextColumn("🏨 Tên Khách sạn", required=True, width="medium"),
-                        "address": st.column_config.TextColumn("📍 Địa chỉ", width="small"),
-                        "total_rooms": st.column_config.NumberColumn("Phòng", format="%d"),
-                        "total_amount": st.column_config.NumberColumn(
-                            "Tổng tiền", 
-                            format="%d VND", 
-                            min_value=0,
-                            help="Tổng chi phí dự kiến trả cho KS"
-                        ),
-                        "deposit": st.column_config.ProgressColumn(
-                            "Tiến độ thanh toán",
-                            format="%d VND",
-                            min_value=0,
-                            max_value=100000000, # Ước lượng max
-                        ),
-                        "remaining": st.column_config.NumberColumn("Còn lại", format="%d VND", disabled=True)
+                        "hotel_name": st.column_config.TextColumn("Tên Khách sạn", required=True),
+                        "address": "Địa chỉ",
+                        "phone": "SĐT",
+                        "total_rooms": st.column_config.TextColumn("Tổng số phòng"),
+                        "room_type": st.column_config.TextColumn("Loại phòng"),
+                        "total_amount": st.column_config.NumberColumn("Tổng tiền", format="%d VND"),
+                        "deposit": st.column_config.NumberColumn("Đã ứng/cọc", format="%d VND"),
+                        "remaining": st.column_config.NumberColumn("Còn lại (Guide trả)", format="%d VND", disabled=True)
                     },
                     use_container_width=True
                 )
                 
-                # Làm sạch dữ liệu sau khi edit (Chuyển về số)
-                edited_hotels = clean_df_cols(edited_hotels, ['total_amount', 'deposit'])
-
-                # Detect changes for Hotels
+                # Xử lý cập nhật tự động
                 cols_h = ['hotel_name', 'address', 'phone', 'total_rooms', 'room_type', 'total_amount', 'deposit']
-                if not edited_hotels[cols_h].equals(st.session_state.ls_hotels_temp[cols_h]):
-                    st.session_state.ls_hotels_temp = edited_hotels[cols_h]
+                # Làm sạch dữ liệu vừa nhập
+                edited_hotels = recalc_remaining(edited_hotels)
+                
+                  # So sánh với dữ liệu cũ (chỉ so các cột nhập liệu để tránh lặp vô tận do cột tính toán)
+                if not edited_hotels[cols_h].equals(st.session_state.ls_hotels_temp[cols_h].map(lambda x: x if not isinstance(x, float) else x)):
+                    st.session_state.ls_hotels_temp = edited_hotels
                     st.rerun()
-
                 # 3. MENU NHÀ HÀNG
                 st.markdown("##### 3. Menu nhà hàng")
                 df_rests = st.session_state.ls_rests_temp.copy()
                 
-                df_rests['total_amount'] = pd.to_numeric(df_rests['total_amount'], errors='coerce').fillna(0)
-                df_rests['deposit'] = pd.to_numeric(df_rests['deposit'], errors='coerce').fillna(0)
-                df_rests['remaining'] = df_rests['total_amount'].fillna(0) - df_rests['deposit'].fillna(0)
-
-                # Format hiển thị tiền tệ
-                df_rests['total_amount'] = df_rests['total_amount'].apply(lambda x: format_vnd(x) + " VND")
-                df_rests['deposit'] = df_rests['deposit'].apply(lambda x: format_vnd(x) + " VND")
-                df_rests['remaining'] = df_rests['remaining'].apply(lambda x: format_vnd(x) + " VND")
+                df_rests = recalc_remaining(df_rests)
 
                 edited_rests = st.data_editor(
                     df_rests,
@@ -6006,34 +6047,25 @@ def render_tour_management():
                         "address": "Địa chỉ",
                         "phone": "SĐT",
                         "menu": st.column_config.TextColumn("Thực đơn", width="large"),
-                        "total_amount": st.column_config.TextColumn("Tổng tiền"),
-                        "deposit": st.column_config.TextColumn("Đã ứng/cọc"),
-                        "remaining": st.column_config.TextColumn("Còn lại (Guide trả)", disabled=True)
+                        "total_amount": st.column_config.NumberColumn("Tổng tiền", format="%d VND"),
+                        "deposit": st.column_config.NumberColumn("Đã ứng/cọc", format="%d VND"),
+                        "remaining": st.column_config.NumberColumn("Còn lại (Guide trả)", format="%d VND", disabled=True)
                     },
                     column_order=("date", "meal_name", "restaurant_name", "address", "phone", "menu", "total_amount", "deposit", "remaining"),
                     use_container_width=True
                 )
                 
-                # Làm sạch dữ liệu sau khi edit
-                edited_rests = clean_df_cols(edited_rests, ['total_amount', 'deposit'])
-
                 cols_r = ['date', 'meal_name', 'restaurant_name', 'address', 'phone', 'menu', 'total_amount', 'deposit']
-                if not edited_rests[cols_r].equals(st.session_state.ls_rests_temp[cols_r]):
-                    st.session_state.ls_rests_temp = edited_rests[cols_r]
+                edited_rests = recalc_remaining(edited_rests)
+                
+                if not edited_rests[cols_r].equals(st.session_state.ls_rests_temp[cols_r].map(lambda x: x if not isinstance(x, float) else x)):
+                    st.session_state.ls_rests_temp = edited_rests
                     st.rerun()
-
-                # 4. ĐIỂM THAM QUAN (MỚI)
+              # 4. ĐIỂM THAM QUAN (MỚI)
                 st.markdown("##### 4. Điểm tham quan")
                 df_sightseeings = st.session_state.ls_sight_temp.copy()
                 
-                df_sightseeings['total_amount'] = pd.to_numeric(df_sightseeings['total_amount'], errors='coerce').fillna(0)
-                df_sightseeings['deposit'] = pd.to_numeric(df_sightseeings['deposit'], errors='coerce').fillna(0)
-                df_sightseeings['remaining'] = df_sightseeings['total_amount'].fillna(0) - df_sightseeings['deposit'].fillna(0)
-
-                # Format hiển thị tiền tệ
-                df_sightseeings['total_amount'] = df_sightseeings['total_amount'].apply(lambda x: format_vnd(x) + " VND")
-                df_sightseeings['deposit'] = df_sightseeings['deposit'].apply(lambda x: format_vnd(x) + " VND")
-                df_sightseeings['remaining'] = df_sightseeings['remaining'].apply(lambda x: format_vnd(x) + " VND")
+                df_sightseeings = recalc_remaining(df_sightseeings)
 
                 edited_sightseeings = st.data_editor(
                     df_sightseeings,
@@ -6044,40 +6076,32 @@ def render_tour_management():
                         "name": st.column_config.TextColumn("Tên địa điểm", required=True),
                         "address": "Địa chỉ",
                         "quantity": st.column_config.NumberColumn("Số lượng", min_value=0),
-                        "total_amount": st.column_config.TextColumn("Tổng tiền"),
-                        "deposit": st.column_config.TextColumn("Đã cọc"),
-                        "remaining": st.column_config.TextColumn("Còn lại", disabled=True),
+                        "total_amount": st.column_config.NumberColumn("Tổng tiền", format="%d VND"),
+                        "deposit": st.column_config.NumberColumn("Đã cọc", format="%d VND"),
+                        "remaining": st.column_config.NumberColumn("Còn lại", format="%d VND", disabled=True),
                         "note": st.column_config.TextColumn("Lưu ý")
                     },
                     column_order=("date", "name", "address", "quantity", "total_amount", "deposit", "remaining", "note"),
                     use_container_width=True
                 )
                 
-                # Làm sạch dữ liệu sau khi edit
-                edited_sightseeings = clean_df_cols(edited_sightseeings, ['total_amount', 'deposit'])
-
                 cols_s = ['date', 'name', 'address', 'quantity', 'total_amount', 'deposit', 'note']
-                if not edited_sightseeings[cols_s].equals(st.session_state.ls_sight_temp[cols_s]):
-                    st.session_state.ls_sight_temp = edited_sightseeings[cols_s]
+                edited_sightseeings = recalc_remaining(edited_sightseeings)
+                
+                if not edited_sightseeings[cols_s].equals(st.session_state.ls_sight_temp[cols_s].map(lambda x: x if not isinstance(x, float) else x)):
+                    st.session_state.ls_sight_temp = edited_sightseeings
                     st.rerun()
-
-                # 5. CHI PHÍ PHÁT SINH (Đã đổi thứ tự lên trên)
+              # 5. CHI PHÍ PHÁT SINH (Đã đổi thứ tự lên trên)
                 st.divider()
                 st.markdown("##### 5. Chi phí phát sinh (Nước, Sim, Banner...)")
                 df_incurred = st.session_state.ls_incurred_temp.copy()
                 
                 # Clean numbers for display
-                df_incurred['price'] = pd.to_numeric(df_incurred['price'], errors='coerce').fillna(0)
-                df_incurred['quantity'] = pd.to_numeric(df_incurred['quantity'], errors='coerce').fillna(0)
+                df_incurred['price'] = df_incurred['price'].apply(clean_vnd_val)
+                df_incurred['quantity'] = df_incurred['quantity'].apply(clean_vnd_val)
+                df_incurred['deposit'] = df_incurred['deposit'].apply(clean_vnd_val)
                 df_incurred['total_amount'] = df_incurred['price'] * df_incurred['quantity']
-                df_incurred['deposit'] = pd.to_numeric(df_incurred['deposit'], errors='coerce').fillna(0)
                 df_incurred['remaining'] = df_incurred['total_amount'] - df_incurred['deposit']
-
-                # Format
-                df_incurred['price'] = df_incurred['price'].apply(lambda x: format_vnd(x) + " VND").astype(str)
-                df_incurred['total_amount'] = df_incurred['total_amount'].apply(lambda x: format_vnd(x) + " VND").astype(str)
-                df_incurred['deposit'] = df_incurred['deposit'].apply(lambda x: format_vnd(x) + " VND").astype(str)
-                df_incurred['remaining'] = df_incurred['remaining'].apply(lambda x: format_vnd(x) + " VND").astype(str)
 
                 edited_incurred = st.data_editor(
                     df_incurred,
@@ -6087,31 +6111,28 @@ def render_tour_management():
                         "name": st.column_config.TextColumn("Tên chi phí", required=True),
                         "unit": st.column_config.TextColumn("ĐVT"),
                         "quantity": st.column_config.NumberColumn("Số lượng", min_value=0),
-                        "price": st.column_config.TextColumn("Đơn giá"),
-                        "total_amount": st.column_config.TextColumn("Thành tiền", disabled=True),
-                        "deposit": st.column_config.TextColumn("Đã ứng/cọc"),
-                        "remaining": st.column_config.TextColumn("Còn lại", disabled=True),
+                        "price": st.column_config.NumberColumn("Đơn giá", format="%d VND"),
+                        "total_amount": st.column_config.NumberColumn("Thành tiền", format="%d VND", disabled=True),
+                        "deposit": st.column_config.NumberColumn("Đã ứng/cọc", format="%d VND"),
+                        "remaining": st.column_config.NumberColumn("Còn lại", format="%d VND", disabled=True),
                         "note": st.column_config.TextColumn("Ghi chú")
                     },
                     column_order=("name", "unit", "quantity", "price", "total_amount", "deposit", "remaining", "note"),
                     use_container_width=True
                 )
                 
-                # Clean data back
-                def clean_vnd_val_inc(x):
-                    if isinstance(x, (int, float)): return float(x)
-                    if isinstance(x, str):
-                        return float(x.replace('.', '').replace(',', '').replace(' VND', '').strip()) if x.strip() else 0.0
-                    return 0.0
-
-                edited_incurred['price'] = edited_incurred['price'].apply(clean_vnd_val_inc)
-                edited_incurred['deposit'] = edited_incurred['deposit'].apply(clean_vnd_val_inc)
+                # Tính toán lại sau khi edit
+                edited_incurred['price'] = edited_incurred['price'].apply(clean_vnd_val)
+                edited_incurred['quantity'] = edited_incurred['quantity'].apply(clean_vnd_val)
+                edited_incurred['deposit'] = edited_incurred['deposit'].apply(clean_vnd_val)
+                edited_incurred['total_amount'] = edited_incurred['price'] * edited_incurred['quantity']
+                edited_incurred['remaining'] = edited_incurred['total_amount'] - edited_incurred['deposit']
                 
                 cols_inc = ['name', 'unit', 'quantity', 'price', 'total_amount', 'deposit', 'note']
-                if not edited_incurred[cols_inc].equals(st.session_state.ls_incurred_temp[cols_inc]):
-                     st.session_state.ls_incurred_temp = edited_incurred[cols_inc]
+                # So sánh (bỏ qua cột tính toán remaining để tránh loop nếu float lệch nhẹ)
+                if not edited_incurred[cols_inc].equals(st.session_state.ls_incurred_temp[cols_inc].map(lambda x: x if not isinstance(x, float) else x)):
+                     st.session_state.ls_incurred_temp = edited_incurred
                      st.rerun()
-
                 st.write("")
                 # 6. CHECKLIST BÀN GIAO (Đã đổi thứ tự xuống dưới)
                 st.markdown("##### 6. Checklist bàn giao hồ sơ HDV")
@@ -7689,7 +7710,7 @@ def main():
         render_login_page(comp)
         return
 
-    module, _ = render_sidebar(comp)
+    module, menu = render_sidebar(comp)
 
     # --- HEADER CHÍNH ---
     l_html = f'<img src="data:image/png;base64,{comp["logo_b64_str"]}" class="company-logo-img">' if comp['logo_b64_str'] else ''
@@ -7711,7 +7732,6 @@ def main():
     elif module == "🔖 Quản Lý Booking":
         render_booking_management()
     elif module == "💰 Kiểm Soát Chi Phí":
-        menu = st.radio("Menu", ["1. Nhập Hóa Đơn", "2. Báo Cáo Tổng Hợp"], horizontal=True)
         render_cost_control(menu)
     elif module == "💳 Quản Lý Công Nợ":
         render_debt_management()
