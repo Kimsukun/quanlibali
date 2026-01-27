@@ -25,6 +25,7 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from lunardate import LunarDate
+from streamlit_option_menu import option_menu # Thêm import này
 
 # --- QUAN TRỌNG: CẤU HÌNH TRANG PHẢI Ở ĐẦU TIÊN ---
 st.set_page_config(
@@ -903,160 +904,143 @@ def get_tour_financials(tour_id, tour_info):
 # 3. CSS & GIAO DIỆN HIỆN ĐẠI
 # ==========================================
 comp = get_company_data()
-st.markdown("""<style>
-/* --- BASE & ANIMATION --- */
-@keyframes fadeIn { 0% { opacity: 0; transform: translateY(10px); } 100% { opacity: 1; transform: translateY(0); } }
-.stApp {
-    background-color: #f8f9fa;
-    font-family: 'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-    animation: fadeIn 0.5s ease-in-out;
-}
+st.markdown("""
+<style>
+    /* --- FONTS & GLOBAL --- */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+    
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
+        color: #1f2937;
+    }
+    
+    /* Ẩn nút Deploy và Menu mặc định của Streamlit */
+    .stDeployButton, #MainMenu, footer {visibility: hidden;}
 
-/* --- TYPOGRAPHY & LABELS --- */
-h1, h2, h3, h4, h5, h6 { color: #2c3e50; }
-div[data-testid="stMarkdownContainer"] p { font-weight: 400; white-space: normal; word-break: break-word; }
-.company-info-text p, .report-card p { white-space: normal !important; }
+    /* --- SIDEBAR HIỆN ĐẠI --- */
+    section[data-testid="stSidebar"] {
+        background-color: #f8f9fa;
+        border-right: 1px solid #e5e7eb;
+    }
+    
+    /* --- CONTAINER & CARDS --- */
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 5rem;
+    }
+    
+    div[data-testid="stVerticalBlock"] > div[style*="flex-direction: column;"] > div[data-testid="stVerticalBlock"] {
+        background-color: white;
+        padding: 1.5rem;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+        border: 1px solid #f3f4f6;
+        margin-bottom: 1rem;
+    }
 
-/* --- MODERN INPUTS --- */
-.stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"], .stTextArea textarea, .stDateInput input {
-    border-radius: 10px !important;
-    border: 1px solid #e0e0e0 !important;
-    padding: 10px 12px !important;
-    background-color: #ffffff !important;
-    transition: all 0.3s;
-    font-size: 0.95rem;
-}
-.stTextInput input:focus, .stNumberInput input:focus, .stTextArea textarea:focus, .stDateInput input:focus {
-    border-color: #56ab2f !important;
-    box-shadow: 0 4px 12px rgba(86, 171, 47, 0.15) !important;
-}
+    /* --- METRIC CARDS --- */
+    div[data-testid="stMetric"] {
+        background-color: #ffffff;
+        border: 1px solid #e5e7eb;
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        transition: transform 0.2s;
+    }
+    div[data-testid="stMetric"]:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        border-color: #2e7d32;
+    }
+    div[data-testid="stMetricLabel"] {font-size: 0.9rem; color: #6b7280;}
+    div[data-testid="stMetricValue"] {font-size: 1.5rem; color: #111827; font-weight: 700;}
 
-/* --- BUTTONS --- */
-.stButton button {
-    border-radius: 12px !important;
-    font-weight: 600;
-    font-size: 1rem;
-    padding: 0.6rem 1.2rem !important;
-    border: none !important;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    white-space: normal !important;
-    height: auto !important;
-    min-height: 2.5rem;
-}
-.stButton button:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 15px rgba(0,0,0,0.1);
-}
-.stButton button[kind="primary"] {
-    background: linear-gradient(90deg, #56ab2f 0%, #a8e063 100%);
-    color: white;
-}
-.stButton button[kind="secondary"] {
-    background-color: #f1f3f5;
-    color: #333;
-}
+    /* --- BUTTONS --- */
+    .stButton > button {
+        border-radius: 8px;
+        font-weight: 600;
+        border: none;
+        padding: 0.5rem 1rem;
+        transition: all 0.2s ease;
+    }
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #059669 0%, #10b981 100%); /* Xanh lá hiện đại */
+        box-shadow: 0 4px 6px rgba(16, 185, 129, 0.2);
+    }
+    .stButton > button[kind="secondary"] {
+        background-color: #f3f4f6;
+        color: #374151;
+        border: 1px solid #d1d5db;
+    }
+    .stButton > button:hover {
+        transform: scale(1.02);
+        opacity: 0.9;
+    }
 
-/* --- COMPANY HEADER --- */
-.company-header-container {
-    display: flex; align-items: center; justify-content: center; gap: 30px;
-    padding: 25px 40px; background: rgba(255, 255, 255, 0.8);
-    backdrop-filter: blur(10px); border-radius: 20px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.05); margin-bottom: 30px;
-    border: 1px solid rgba(255,255,255,0.3); flex-wrap: nowrap !important;
-}
-.company-logo-img { height: 70px; width: auto; object-fit: contain; flex-shrink: 0; }
-.company-info-text { text-align: left; flex: 1; display: flex; flex-direction: column; justify-content: center; white-space: normal; }
-.company-info-text h1 { margin: 0; font-size: 1.8rem; color: #2e7d32; font-weight: 800; line-height: 1.2; }
-.company-info-text p { margin: 5px 0 0 0; color: #555; font-size: 0.9rem; font-weight: 500; display: flex; align-items: center; gap: 10px; }
+    /* --- INPUT FIELDS --- */
+    .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"], .stTextArea textarea, .stDateInput input {
+        border-radius: 8px !important;
+        border: 1px solid #d1d5db !important;
+        background-color: #f9fafb !important; 
+    }
+    .stTextInput input:focus, .stNumberInput input:focus {
+        border-color: #059669 !important;
+        background-color: #ffffff !important;
+        box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.1) !important;
+    }
 
-/* --- CARD STYLES --- */
-.report-card, .login-container {
-    background-color: white; border: none; border-radius: 20px;
-    padding: 25px; margin-bottom: 25px;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.04);
-    transition: all 0.3s ease;
-}
-.report-card:hover { transform: translateY(-5px); box-shadow: 0 20px 40px rgba(0,0,0,0.08); }
-
-/* --- MONEY BOX --- */
-.money-box {
-    background: linear-gradient(135deg, #00b09b, #96c93d) !important;
-    color: #ffffff !important; padding: 25px; border-radius: 20px;
-    box-shadow: 0 15px 30px -5px rgba(0, 176, 155, 0.3);
-    font-size: clamp(1.2rem, 3vw, 2.5rem); font-weight: 800;
-    text-align: center; margin: 1.5rem 0; width: 100%;
-    text-shadow: 0 2px 4px rgba(0,0,0,0.1); letter-spacing: 1px;
-    white-space: normal; word-wrap: break-word;
-    transition: transform 0.3s ease;
-}
-.money-box:hover { transform: scale(1.02); }
-
-/* --- MODERN TABS --- */
-div[data-baseweb="tab-list"] { border-bottom: 2px solid #e0e0e0; }
-button[data-baseweb="tab"] {
-    background-color: transparent !important; border-bottom: 2px solid transparent !important;
-    padding-bottom: 10px !important; margin-bottom: -2px !important; transition: all 0.3s !important;
-}
-button[data-baseweb="tab"]:hover { background-color: #f1f3f5 !important; }
-button[aria-selected="true"] {
-    border-bottom-color: #56ab2f !important; font-weight: 600; color: #56ab2f !important;
-}
-
-/* --- ENHANCED EXPANDER --- */
-div[data-testid="stExpander"] {
-    border: 1px solid #e0e0e0 !important; border-radius: 15px !important;
-    overflow: hidden; box-shadow: none !important; background-color: #fff;
-}
-div[data-testid="stExpander"] > details > summary {
-    font-weight: 600; font-size: 1.05rem; background-color: #fafafa;
-    padding: 0.75rem 1rem !important;
-}
-div[data-testid="stExpander"] > details > summary:hover { background-color: #f1f3f5; }
-
-/* --- DATA EDITOR --- */
-div[data-testid="stDataEditor"] {
-    border-radius: 15px; overflow: hidden;
-    border: 1px solid #f0f0f0; box-shadow: 0 4px 12px rgba(0,0,0,0.03);
-}
-
-/* --- FINANCE SUMMARY CARDS --- */
-.finance-summary-card {
-    background-color: #ffffff; border: 1px solid #e9ecef; border-radius: 15px;
-    padding: 20px; margin-top: 15px;
-}
-.finance-summary-card .row {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 8px 0; border-bottom: 1px solid #f1f3f5;
-}
-.finance-summary-card .row:last-child { border-bottom: none; }
-.finance-summary-card .row span { color: #495057; }
-.finance-summary-card .row b { color: #212529; }
-.finance-summary-card .total-row {
-    font-size: 1.2em; font-weight: bold; color: #2e7d32; padding-top: 15px;
-}
-.finance-summary-card .pax-price {
-    text-align: right; font-size: 0.9em; color: #6c757d; margin-top: 5px;
-}
-.profit-summary-card {
-    background-color: #e3f2fd; padding: 20px; border-radius: 15px;
-    text-align: center; border: 1px solid #90caf9; margin-top: 10px;
-}
-.profit-summary-card h3 {
-    margin: 0; color: #1565c0; font-size: 1.1rem; font-weight: 600;
-}
-.profit-summary-card .formula {
-    font-size: 1.8em; font-weight: bold; color: #1e88e5; margin-top: 10px;
-}
-.profit-summary-card .formula .result { color: #d32f2f; }
-
-/* --- RESPONSIVE --- */
-@media only screen and (max-width: 600px) {
-    .company-header-container { flex-direction: column; text-align: center; gap: 10px; flex-wrap: wrap !important; }
-    .company-info-text { text-align: center; }
-    .company-info-text p { justify-content: center; }
-}
-</style>""", unsafe_allow_html=True)
+    /* --- TABS --- */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 24px;
+        border-bottom: 1px solid #e5e7eb;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        white-space: pre-wrap;
+        background-color: transparent;
+        border-radius: 0;
+        color: #6b7280;
+        font-weight: 500;
+    }
+    .stTabs [aria-selected="true"] {
+        color: #059669;
+        border-bottom: 2px solid #059669;
+    }
+    
+    /* --- CUSTOM HEADER --- */
+    .header-style {
+        background: linear-gradient(90deg, #ecfdf5 0%, #ffffff 100%);
+        padding: 1.5rem;
+        border-radius: 12px;
+        border: 1px solid #a7f3d0;
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        margin-bottom: 2rem;
+    }
+    .header-title {
+        color: #065f46;
+        font-weight: 800;
+        font-size: 1.8rem;
+        margin: 0;
+    }
+    .header-subtitle {
+        color: #047857;
+        font-size: 0.95rem;
+        margin: 0;
+    }
+    
+    /* --- LEGACY SUPPORT (DO NOT REMOVE) --- */
+    .company-header-container { display: flex; align-items: center; gap: 20px; margin-bottom: 20px; }
+    .company-logo-img { height: 60px; width: auto; }
+    .company-info-text h1 { margin: 0; color: #059669; }
+    .money-box { background: #059669; color: white; padding: 20px; border-radius: 10px; text-align: center; font-size: 24px; font-weight: bold; margin: 20px 0; }
+    .report-card { background: white; padding: 15px; border-radius: 10px; border: 1px solid #e5e7eb; margin-bottom: 10px; }
+    .finance-summary-card { background: #f9fafb; padding: 15px; border-radius: 10px; border: 1px solid #e5e7eb; }
+    .profit-summary-card { background: #ecfdf5; padding: 15px; border-radius: 10px; border: 1px solid #a7f3d0; text-align: center; }
+    .profit-summary-card .formula { font-size: 1.5rem; font-weight: bold; color: #065f46; }
+</style>
+""", unsafe_allow_html=True)
 
 def convert_image_to_pdf(image_file):
     try:
@@ -2968,60 +2952,162 @@ def render_dashboard():
 # ==========================================
 
 def render_login_page(comp):
-    col_a, col_b, col_c = st.columns([1, 2, 1])
-    with col_b:
-        st.write("")
+    # --- CSS MỚI: ÉP STYLE TRỰC TIẾP VÀO FORM STREAMLIT ---
+    st.markdown("""
+        <style>
+            /* 1. Nền trang web */
+            .stApp {
+                background-color: #F2F4F8;
+            }
+            
+            /* Ẩn Sidebar và Header mặc định */
+            section[data-testid="stSidebar"] {display: none;}
+            header {visibility: hidden;}
+            
+            /* 2. Biến Form đăng nhập thành cái Card đẹp */
+            div[data-testid="stForm"] {
+                background-color: white;
+                padding: 40px;
+                border-radius: 20px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.1); /* Đổ bóng */
+                border: none; /* Bỏ viền xám mặc định */
+            }
+
+            /* 3. Chỉnh ô nhập liệu (Input) */
+            div[data-testid="stTextInput"] input {
+                border-radius: 10px !important;
+                padding: 10px 15px !important;
+                border: 1px solid #E0E0E0 !important;
+                background-color: #FAFAFA !important;
+                color: #333 !important;
+            }
+            /* Khi bấm vào ô nhập liệu: Viền chuyển màu xanh đậm */
+            div[data-testid="stTextInput"] input:focus {
+                border-color: #0e0259 !important; 
+                box-shadow: 0 0 0 2px rgba(14, 2, 89, 0.2) !important;
+            }
+
+            /* 4. Nút bấm Đăng nhập (QUAN TRỌNG: Selector này chuẩn cho Form) */
+            div[data-testid="stFormSubmitButton"] button {
+                width: 100%;
+                border-radius: 10px !important;
+                height: 48px;
+                background-color: #0e0259 !important; /* Màu xanh đậm bạn yêu cầu */
+                color: white !important;
+                font-weight: 600 !important;
+                border: none !important;
+                box-shadow: 0 4px 10px rgba(14, 2, 89, 0.3);
+                transition: all 0.3s ease;
+            }
+            div[data-testid="stFormSubmitButton"] button:hover {
+                background-color: #1a0b7e !important; /* Sáng hơn chút khi di chuột */
+                transform: translateY(-2px);
+            }
+            
+            /* Căn giữa Tab */
+            div[data-baseweb="tab-list"] {
+                justify-content: center;
+                margin-bottom: 20px;
+                border-bottom: none !important;
+            }
+            /* Tab được chọn */
+            button[data-baseweb="tab"][aria-selected="true"] {
+                background-color: transparent !important;
+                color: #0e0259 !important;
+                font-weight: bold !important;
+                border-bottom: 3px solid #0e0259 !important;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # --- BỐ CỤC CĂN GIỮA ---
+    # Chia 3 cột, nội dung nằm ở cột giữa
+    col_l, col_center, col_r = st.columns([1, 1.2, 1])
+
+    with col_center:
+        # Khoảng trống phía trên để đẩy card xuống giữa màn hình
+        st.write("") 
+        st.write("") 
+
+        # 1. Logo & Tên Công Ty (Nằm ngoài form cho thoáng)
         if comp['logo_b64_str']:
             st.markdown(f'''
-            <div class="company-header-container">
-                <img src="data:image/png;base64,{comp["logo_b64_str"]}" class="company-logo-img">
-                <div class="company-info-text">
-                    <h1>{comp['name']}</h1>
-                    <p>📍 {comp['address']}</p>
-                    <p>MST: {comp['phone']}</p>
+                <div style="display: flex; flex-direction: column; align-items: center; margin-bottom: 20px;">
+                    <img src="data:image/png;base64,{comp["logo_b64_str"]}" style="height: 80px; width: auto; object-fit: contain; margin-bottom: 15px;">
+                    <h3 style="color: #0e0259; margin: 0; text-align: center; font-size: 22px;">{comp['name']}</h3>
+                    <p style="color: #666; font-size: 14px;">Hệ thống quản lý nội bộ</p>
                 </div>
-            </div>
             ''', unsafe_allow_html=True)
         else:
-            st.markdown(f"""<div style="text-align:center; margin-top:20px;"><h1 style="color:#28a745 !important;">{comp['name']}</h1><p>📍 {comp['address']}<br>MST: {comp['phone']}</p></div>""", unsafe_allow_html=True)
+            st.markdown(f"""<h2 style='text-align: center; color: #0e0259;'>{comp['name']}</h2>""", unsafe_allow_html=True)
+
+        # 2. Khu vực Form (Login / Register)
+        tab_login, tab_reg = st.tabs(["ĐĂNG NHẬP", "ĐĂNG KÝ"])
         
-        tab_login, tab_reg = st.tabs(["🔐 Đăng nhập", "📝 Đăng ký"])
         with tab_login:
-            with st.container(border=True):
-                with st.form("login"):
-                    u = st.text_input("Tài khoản"); p = st.text_input("Mật khẩu", type="password")
-                    if st.form_submit_button("ĐĂNG NHẬP", width="stretch"):
+            # Form này sẽ tự nhận CSS data-testid="stForm" ở trên
+            with st.form("login_form"):
+                st.write("") # Spacer nhỏ
+                u = st.text_input("Tên đăng nhập", placeholder="Nhập username...", label_visibility="collapsed")
+                p = st.text_input("Mật khẩu", type="password", placeholder="Nhập mật khẩu...", label_visibility="collapsed")
+                st.write("") # Spacer
+                
+                # Nút Submit (Sẽ nhận CSS màu #0e0259)
+                submitted = st.form_submit_button("ĐĂNG NHẬP")
+                
+                if submitted:
+                    if not u or not p:
+                        st.warning("Vui lòng nhập đầy đủ thông tin!")
+                    else:
                         pw_hash = hash_pass(p)
-                        
-                        # [CODE MỚI] Đọc từ Google Sheet thay vì SQL
                         df_users = load_table('users') 
                         
-                        # Kiểm tra user
                         if not df_users.empty:
-                            # Lọc user trùng username và password
-                            mask = (df_users['username'] == u) & (df_users['password'] == pw_hash) # type: ignore
+                            mask = (df_users['username'] == u) & (df_users['password'] == pw_hash)
                             user_found = df_users.loc[mask]
                             
-                            if not user_found.empty and user_found.iloc[0]['status'] == 'approved': # type: ignore
-                                st.session_state.logged_in = True
-                                st.session_state.user_info = {
-                                    "name": user_found.iloc[0]['username'],  # type: ignore
-                                    "role": user_found.iloc[0]['role'] # type: ignore
-                                }
-                                st.rerun()
+                            if not user_found.empty:
+                                if user_found.iloc[0]['status'] == 'approved':
+                                    st.session_state.logged_in = True
+                                    st.session_state.user_info = {
+                                        "name": user_found.iloc[0]['username'],
+                                        "role": user_found.iloc[0]['role']
+                                    }
+                                    st.success("Đăng nhập thành công!")
+                                    time.sleep(0.5)
+                                    st.rerun()
+                                else:
+                                    st.error("🚫 Tài khoản chưa được duyệt!")
                             else:
-                                st.error("Sai thông tin hoặc tài khoản chưa duyệt!")
+                                st.error("❌ Sai thông tin đăng nhập!")
                         else:
-                            st.error("Không kết nối được danh sách người dùng!")
+                            st.error("⚠️ Lỗi kết nối dữ liệu!")
+
         with tab_reg:
-            with st.container(border=True):
-                with st.form("reg"):
-                    nu = st.text_input("Tài khoản mới"); np = st.text_input("Mật khẩu", type="password")
-                    if st.form_submit_button("ĐĂNG KÝ", width="stretch"):
+            with st.form("reg_form"):
+                st.write("")
+                nu = st.text_input("Tên đăng nhập mới", placeholder="Chọn username...", label_visibility="collapsed")
+                np = st.text_input("Mật khẩu mới", type="password", placeholder="Tạo mật khẩu...", label_visibility="collapsed")
+                st.write("")
+                
+                if st.form_submit_button("GỬI YÊU CẦU"):
+                    if not nu or not np:
+                        st.warning("Nhập đủ thông tin nhé!")
+                    else:
                         try:
-                            add_row_to_table('users', {'username': nu, 'password': hash_pass(np), 'role': 'user', 'status': 'pending'})
-                            st.success("Đã gửi yêu cầu! Chờ xíu nha 🥰")
-                        except: st.error("Tên này có người dùng rồi nè!")
+                            # Kiểm tra trùng user
+                            conn = get_connection()
+                            exist = run_query("SELECT id FROM users WHERE username=?", (nu,), fetch_one=True)
+                            if exist:
+                                st.error("Tên này đã tồn tại!")
+                            else:
+                                add_row_to_table('users', {'username': nu, 'password': hash_pass(np), 'role': 'user', 'status': 'pending'})
+                                st.success("✅ Đã gửi yêu cầu! Vui lòng báo Admin duyệt.")
+                        except Exception as e:
+                            st.error(f"Lỗi: {e}")
+
+        # Footer
+        st.markdown("<p style='text-align: center; color: #999; font-size: 12px; margin-top: 30px;'>© 2026 Bali Tourist System</p>", unsafe_allow_html=True)
 
 def render_admin_notifications():
     st.divider()
@@ -3203,21 +3289,64 @@ def render_admin_panel(comp):
 
 def render_sidebar(comp):
     with st.sidebar:
-        if comp['logo_b64_str']: st.markdown(f'<div style="text-align:center; margin-bottom:20px;"><img src="data:image/png;base64,{comp["logo_b64_str"]}" width="120" style="border-radius:10px;"></div>', unsafe_allow_html=True)
+        # Logo (Giữ nguyên)
+        if comp['logo_b64_str']: 
+            st.markdown(f'<div style="text-align:center; margin-bottom:20px;"><img src="data:image/png;base64,{comp["logo_b64_str"]}" width="140" style="border-radius:10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);"></div>', unsafe_allow_html=True)
         
+        # User Info Card (Làm đẹp hơn)
         user_info = st.session_state.get("user_info")
-        if user_info and isinstance(user_info, dict):
-            st.success(f"Xin chào **{user_info.get('name', 'User')}** 👋")
+        if user_info:
+            st.markdown(f"""
+            <div style="background-color: #ecfdf5; padding: 12px; border-radius: 8px; border: 1px solid #a7f3d0; margin-bottom: 20px; text-align: center;">
+                <div style="font-weight: bold; color: #065f46;">👤 {user_info.get('name', 'User')}</div>
+                <div style="font-size: 0.8em; color: #047857; text-transform: uppercase;">{user_info.get('role', 'staff')}</div>
+            </div>
+            """, unsafe_allow_html=True)
         else:
             st.session_state.logged_in = False
             st.rerun()
         
-        st.markdown("### 🗂️ Phân Hệ Quản Lý")
-        module = st.selectbox("Chọn chức năng:", ["🏠 Trang Chủ", "📅 Lịch Thông Báo", "🔖 Quản Lý Booking", "💰 Kiểm Soát Chi Phí", "💳 Quản Lý Công Nợ", "📦 Quản Lý Tour ", "🤝 Quản Lý Khách Hàng", "👥 Quản Lý Nhân Sự", "🔍 Tra cứu thông tin"], label_visibility="collapsed")
+        # MENU MỚI (Thay thế selectbox cũ)
+        module = option_menu(
+            None,
+            ["Trang Chủ", "Lịch Thông Báo", "Quản Lý Booking", "Kiểm Soát Chi Phí", "Quản Lý Công Nợ", "Quản Lý Tour", "Khách Hàng", "Nhân Sự", "Tra cứu"],
+            icons=['house', 'calendar-check', 'bookmark-star', 'cash-coin', 'credit-card', 'box-seam', 'people', 'person-badge', 'search'],
+            menu_icon="cast",
+            default_index=0,
+            styles={
+                "container": {"padding": "0!important", "background-color": "transparent"},
+                "icon": {"color": "#6b7280", "font-size": "18px"}, 
+                "nav-link": {
+                    "font-family": "Inter, sans-serif", 
+                    "font-size": "15px", 
+                    "text-align": "left", 
+                    "margin": "4px 0px", 
+                    "padding": "10px 15px",
+                    "border-radius": "8px",
+                    "--hover-color": "#f3f4f6",
+                    "color": "#374151"
+                },
+                "nav-link-selected": {
+                    "background-color": "#059669", 
+                    "color": "white",
+                    "font-weight": "600",
+                    "box-shadow": "0 2px 4px rgba(0,0,0,0.1)"
+                },
+            }
+        )
         
-        menu = None
-        if module == "💰 Kiểm Soát Chi Phí":
-            menu = st.radio("Menu", ["1. Nhập Hóa Đơn", "2. Báo Cáo Tổng Hợp"])
+        # Mapping lại tên module cũ để code phía dưới vẫn chạy
+        module_map = {
+            "Trang Chủ": "🏠 Trang Chủ",
+            "Lịch Thông Báo": "📅 Lịch Thông Báo",
+            "Quản Lý Booking": "🔖 Quản Lý Booking",
+            "Kiểm Soát Chi Phí": "💰 Kiểm Soát Chi Phí",
+            "Quản Lý Công Nợ": "💳 Quản Lý Công Nợ",
+            "Quản Lý Tour": "📦 Quản Lý Tour ", # Lưu ý khoảng trắng ở cuối trong code gốc của bạn
+            "Khách Hàng": "🤝 Quản Lý Khách Hàng",
+            "Nhân Sự": "👥 Quản Lý Nhân Sự",
+            "Tra cứu": "🔍 Tra cứu thông tin"
+        }
         
         if st.session_state.user_info and st.session_state.user_info.get('role') in ['admin', 'admin_f1']:
             render_admin_notifications()
@@ -3265,7 +3394,7 @@ def render_sidebar(comp):
                 except Exception as e:
                     st.error(f"❌ Lỗi: {str(e)}")
                     st.info("💡 Gợi ý: Kiểm tra file service_account.json hoặc quyền chia sẻ của Sheet/Folder.")
-    return module, menu
+    return module_map.get(module, "🏠 Trang Chủ"), None # Menu con xử lý ở main view
 
 # --- HÀM HIỂN THỊ SO SÁNH CHI PHÍ (UNC vs HÓA ĐƠN) ---
 def render_cost_comparison(code):
@@ -3675,7 +3804,7 @@ def render_cost_control(menu):
                 
                 def get_status_note(row): # type: ignore
                     if row['status'] == 'deleted': # type: ignore
-                        return "❌ Đã xóa"
+                        return "🗑️ Đã xóa"
                     note = ""
                     if row['request_edit'] == 1: # type: ignore
                         note += "⏳ Chờ duyệt"
@@ -3703,7 +3832,11 @@ def render_cost_control(menu):
                         "Loại": st.column_config.TextColumn(disabled=True),
                         "Số HĐ": st.column_config.TextColumn(disabled=True),
                         "Tổng Tiền": st.column_config.TextColumn(disabled=True),
-                        "Trạng thái": st.column_config.TextColumn(disabled=True),
+                        "Trạng thái": st.column_config.TextColumn(
+                            "Trạng thái",
+                            width="small",
+                            disabled=True
+                        ),
                         "Ghi chú": st.column_config.TextColumn(disabled=True),
                     },
                     hide_index=True,
@@ -5811,24 +5944,28 @@ def render_tour_management():
                 df_hotels['deposit'] = pd.to_numeric(df_hotels['deposit'], errors='coerce').fillna(0)
                 df_hotels['remaining'] = df_hotels['total_amount'].fillna(0) - df_hotels['deposit'].fillna(0)
 
-                # Format hiển thị tiền tệ
-                df_hotels['total_amount'] = df_hotels['total_amount'].apply(lambda x: format_vnd(x) + " VND")
-                df_hotels['deposit'] = df_hotels['deposit'].apply(lambda x: format_vnd(x) + " VND")
-                df_hotels['remaining'] = df_hotels['remaining'].apply(lambda x: format_vnd(x) + " VND")
-
+                # Thay thế phần st.data_editor cũ bằng config chi tiết hơn
                 edited_hotels = st.data_editor(
                     df_hotels,
                     num_rows="dynamic",
                     key="hotel_editor",
                     column_config={
-                        "hotel_name": st.column_config.TextColumn("Tên Khách sạn", required=True),
-                        "address": "Địa chỉ",
-                        "phone": "SĐT",
-                        "total_rooms": st.column_config.TextColumn("Tổng số phòng"),
-                        "room_type": st.column_config.TextColumn("Loại phòng"),
-                        "total_amount": st.column_config.TextColumn("Tổng tiền"),
-                        "deposit": st.column_config.TextColumn("Đã ứng/cọc"),
-                        "remaining": st.column_config.TextColumn("Còn lại (Guide trả)", disabled=True)
+                        "hotel_name": st.column_config.TextColumn("🏨 Tên Khách sạn", required=True, width="medium"),
+                        "address": st.column_config.TextColumn("📍 Địa chỉ", width="small"),
+                        "total_rooms": st.column_config.NumberColumn("Phòng", format="%d"),
+                        "total_amount": st.column_config.NumberColumn(
+                            "Tổng tiền", 
+                            format="%d VND", 
+                            min_value=0,
+                            help="Tổng chi phí dự kiến trả cho KS"
+                        ),
+                        "deposit": st.column_config.ProgressColumn(
+                            "Tiến độ thanh toán",
+                            format="%d VND",
+                            min_value=0,
+                            max_value=100000000, # Ước lượng max
+                        ),
+                        "remaining": st.column_config.NumberColumn("Còn lại", format="%d VND", disabled=True)
                     },
                     use_container_width=True
                 )
@@ -7549,7 +7686,7 @@ def main():
         render_login_page(comp)
         return
 
-    module, menu = render_sidebar(comp)
+    module, _ = render_sidebar(comp)
 
     # --- HEADER CHÍNH ---
     l_html = f'<img src="data:image/png;base64,{comp["logo_b64_str"]}" class="company-logo-img">' if comp['logo_b64_str'] else ''
@@ -7571,6 +7708,7 @@ def main():
     elif module == "🔖 Quản Lý Booking":
         render_booking_management()
     elif module == "💰 Kiểm Soát Chi Phí":
+        menu = st.radio("Menu", ["1. Nhập Hóa Đơn", "2. Báo Cáo Tổng Hợp"], horizontal=True)
         render_cost_control(menu)
     elif module == "💳 Quản Lý Công Nợ":
         render_debt_management()
