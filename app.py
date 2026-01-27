@@ -914,8 +914,11 @@ st.markdown("""
         color: #1f2937;
     }
     
-    /* Ẩn nút Deploy và Menu mặc định của Streamlit */
-    .stDeployButton, #MainMenu, footer {visibility: hidden;}
+    /* --- ẨN CÁC THÀNH PHẦN MẶC ĐỊNH CỦA STREAMLIT --- */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    .stDeployButton {visibility: hidden;}
 
     /* --- SIDEBAR HIỆN ĐẠI --- */
     section[data-testid="stSidebar"] {
