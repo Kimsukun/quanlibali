@@ -5449,6 +5449,8 @@ def render_tour_management():
                 
                 guest_cnt = tour_info['guest_count'] if tour_info['guest_count'] else 1
 
+                force_rerun_fmt = False
+
                 for idx, row in df_new.iterrows():
                     n_unit = row['unit_price']
                     n_qty = row['quantity']
@@ -5482,6 +5484,10 @@ def render_tour_management():
                         new_total = n_pax_edit * guest_cnt
                         if n_qty * n_times != 0:
                             df_new.at[idx, 'unit_price'] = new_total / (n_qty * n_times)
+                    
+                    # [NEW] Check formatting to force refresh if user typed raw number
+                    if str(row['total_display']) != (format_vnd(n_total_edit) + " VND"): force_rerun_fmt = True
+                    if str(row['price_per_pax']) != (format_vnd(n_pax_edit) + " VND"): force_rerun_fmt = True
                 
                 # So sánh với dữ liệu cũ
                 cols_check = ['category', 'description', 'unit', 'unit_price', 'quantity', 'times']
@@ -5494,7 +5500,7 @@ def render_tour_management():
                 if len(df_new_check) != len(df_old_check): has_changes = True
                 elif not df_new_check.equals(df_old_check): has_changes = True
                 
-                if has_changes:
+                if has_changes or force_rerun_fmt:
                     st.session_state.est_df_temp = df_new[cols_check]
                     st.rerun()
 
