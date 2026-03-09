@@ -7905,6 +7905,26 @@ def render_invoice_management():
         selected_period = f"{sel_month:02d}/{sel_year}"
         st.info(f"🗓️ Đang làm việc với tháng: **{selected_period}**")
 
+        # Hiển thị nhanh danh sách dự án đang có trong tháng chọn
+        projects_in_month_top = set()
+        if not st.session_state.profit_output_invoices.empty:
+            projects_in_month_top.update(
+                st.session_state.profit_output_invoices.loc[
+                    st.session_state.profit_output_invoices['period'] == selected_period, 'project'
+                ].astype(str).str.strip().tolist()
+            )
+        if not st.session_state.profit_input_invoices.empty:
+            projects_in_month_top.update(
+                st.session_state.profit_input_invoices.loc[
+                    st.session_state.profit_input_invoices['period'] == selected_period, 'project'
+                ].astype(str).str.strip().tolist()
+            )
+        projects_in_month_top = sorted([p for p in projects_in_month_top if p])
+        if projects_in_month_top:
+            st.caption(f"📌 Dự án trong tháng {selected_period}: {', '.join(projects_in_month_top)}")
+        else:
+            st.caption(f"📌 Dự án trong tháng {selected_period}: Chưa có")
+
         # Đặt tên báo cáo ở đầu tab
         if "profit_report_name" not in st.session_state:
             st.session_state.profit_report_name = "Báo cáo lợi nhuận"
@@ -7917,7 +7937,7 @@ def render_invoice_management():
             disabled=not st.session_state.profit_meta_edit_mode
         )
 
-        # Tạo nhanh dự án nhỏ trong tháng đang chọn
+        # Tạo nhanh dự án trong tháng đang chọn
         if "profit_new_project_name" not in st.session_state:
             st.session_state.profit_new_project_name = ""
         if "profit_new_project_name_clear" not in st.session_state:
@@ -7929,7 +7949,7 @@ def render_invoice_management():
         col_add_proj_name, col_add_proj_btn = st.columns([4, 1])
         with col_add_proj_name:
             st.text_input(
-                "📌 Tên dự án nhỏ cần thêm",
+                "📌 Tên dự án cần thêm",
                 key="profit_new_project_name",
                 placeholder="VD: Tour Hạ Long 20/08 hoặc Booking Lẻ Anh A"
             )
@@ -7979,7 +7999,7 @@ def render_invoice_management():
                     else:
                         st.info("Dự án này đã tồn tại trong tháng hiện tại.")
 
-        # Chọn dự án nhỏ đang nhập (mỗi lần nhập là cho 1 dự án)
+        # Chọn dự án đang nhập (mỗi lần nhập là cho 1 dự án)
         if "profit_selected_project_by_period" not in st.session_state:
             st.session_state.profit_selected_project_by_period = {}
 
@@ -8008,13 +8028,13 @@ def render_invoice_management():
             st.session_state.profit_selected_project_by_period[selected_period] = remembered_project
 
         selected_project = st.selectbox(
-            "🧩 Dự án nhỏ đang nhập",
+            "🧩 Dự án đang nhập",
             options=project_options_sorted,
             index=project_options_sorted.index(remembered_project),
             key=f"profit_selected_project_{selected_period}"
         )
         st.session_state.profit_selected_project_by_period[selected_period] = selected_project
-        st.caption("Dữ liệu bạn nhập bên dưới sẽ thuộc đúng dự án này. Tổng kết tháng sẽ tự cộng tất cả dự án nhỏ.")
+        st.caption("Dữ liệu bạn nhập bên dưới sẽ thuộc đúng dự án này. Tổng kết tháng sẽ tự cộng tất cả dự án.")
 
         def is_profit_row_valid(df: pd.DataFrame) -> pd.Series:
             """Giữ dòng có mô tả hoặc có số tiền khác 0 để tránh mất dữ liệu khi nhập từng bước."""
@@ -8214,7 +8234,7 @@ def render_invoice_management():
         # Tính tổng chi dự án đang nhập (chỉ tính dòng có nội dung)
         total_expense_project = edited_input_clean['amount'].sum()
 
-        # Tính tổng tháng = tổng của tất cả dự án nhỏ trong tháng
+        # Tính tổng tháng = tổng của tất cả dự án trong tháng
         df_month_output = st.session_state.profit_output_invoices.copy()
         df_month_input = st.session_state.profit_input_invoices.copy()
         df_month_output = df_month_output[df_month_output['period'] == selected_period] if not df_month_output.empty else pd.DataFrame(columns=['period', 'project', 'invoice_no', 'description', 'amount'])
@@ -8232,7 +8252,7 @@ def render_invoice_management():
         with col_metric2:
             st.metric("💸 Tổng Chi (Dự án đang chọn)", format_vnd(total_expense_project) + " VND")
 
-        # === CẢNH BÁO TRÙNG DỮ LIỆU TRONG DỰ ÁN NHỎ ===
+        # === CẢNH BÁO TRÙNG DỮ LIỆU TRONG DỰ ÁN ===
         dup_out_inv = (
             edited_output_clean[
                 edited_output_clean['invoice_no'].astype(str).str.strip().ne("")
@@ -8276,7 +8296,7 @@ def render_invoice_management():
         dup_cross_inv = sorted(out_inv_set.intersection(in_inv_set))
 
         if (not dup_out_inv.empty) or (not dup_in_inv.empty) or (not dup_out_amt.empty) or (not dup_in_amt.empty) or dup_cross_inv:
-            st.markdown("#### ⚠️ Cảnh báo trùng dữ liệu trong dự án nhỏ")
+            st.markdown("#### ⚠️ Cảnh báo trùng dữ liệu trong dự án")
 
             if not dup_out_inv.empty:
                 vals = ", ".join([f"{k} ({int(v)} lần)" for k, v in dup_out_inv.head(8).items()])
@@ -8287,11 +8307,11 @@ def render_invoice_management():
                 st.warning(f"[Chi] Trùng Số HĐ: {vals}")
 
             if not dup_out_amt.empty:
-                vals = ", ".join([f"{format_vnd(float(k))} ({int(v)} lần)" for k, v in dup_out_amt.head(8).items()])
+                vals = ", ".join([f"{format_vnd(clean_profit_amount(k))} ({int(v)} lần)" for k, v in dup_out_amt.head(8).items()])
                 st.warning(f"[Thu] Trùng Số tiền: {vals}")
 
             if not dup_in_amt.empty:
-                vals = ", ".join([f"{format_vnd(float(k))} ({int(v)} lần)" for k, v in dup_in_amt.head(8).items()])
+                vals = ", ".join([f"{format_vnd(clean_profit_amount(k))} ({int(v)} lần)" for k, v in dup_in_amt.head(8).items()])
                 st.warning(f"[Chi] Trùng Số tiền: {vals}")
 
             if dup_cross_inv:
@@ -8299,9 +8319,9 @@ def render_invoice_management():
                 st.warning(f"Số HĐ xuất hiện ở cả Thu và Chi trong cùng dự án: {vals}")
             st.caption("Hệ thống chỉ cảnh báo để bạn rà soát, không tự động xóa dữ liệu.")
         
-        # === BÁO CÁO DỰ ÁN NHỎ TRONG THÁNG ===
+        # === BÁO CÁO DỰ ÁN TRONG THÁNG ===
         st.markdown("---")
-        st.markdown("#### 🧩 Báo Cáo Dự Án Nhỏ Trong Tháng")
+        st.markdown("#### 🧩 Báo Cáo Dự Án Trong Tháng")
 
         def build_project_amount_table(df_src: pd.DataFrame, amount_col_name: str) -> pd.DataFrame:
             if df_src.empty:
@@ -8324,14 +8344,14 @@ def render_invoice_management():
             df_project_summary = df_project_summary.sort_values('Lợi Nhuận', ascending=False).reset_index(drop=True)
 
             df_project_show = df_project_summary.copy()
-            df_project_show = df_project_show.rename(columns={'project': 'Dự án nhỏ'})
+            df_project_show = df_project_show.rename(columns={'project': 'Dự án'})
             df_project_show['Tổng Thu'] = df_project_show['Tổng Thu'].apply(lambda x: format_vnd(x) + " VND")
             df_project_show['Tổng Chi'] = df_project_show['Tổng Chi'].apply(lambda x: format_vnd(x) + " VND")
             df_project_show['Lợi Nhuận'] = df_project_show['Lợi Nhuận'].apply(lambda x: format_vnd(x) + " VND")
             st.dataframe(df_project_show, use_container_width=True, hide_index=True)
         else:
             df_project_summary = pd.DataFrame(columns=['project', 'Tổng Thu', 'Tổng Chi', 'Lợi Nhuận'])
-            st.info("Chưa có dữ liệu dự án nhỏ trong tháng này.")
+            st.info("Chưa có dữ liệu dự án trong tháng này.")
 
         # === TÍNH LỢI NHUẬN ===
         st.markdown("---")
@@ -8487,7 +8507,7 @@ def render_invoice_management():
                             current_row = 3
                             ws.merge_range(current_row, 0, current_row, 5, "I. DANH SÁCH THU", section_thu_fmt)
                             current_row += 1
-                            out_cols = ['Tháng', 'Dự án nhỏ', 'Loại', 'Số HĐ', 'Diễn giải', 'Số tiền']
+                            out_cols = ['Tháng', 'Dự án', 'Loại', 'Số HĐ', 'Diễn giải', 'Số tiền']
                             for c_idx, c_name in enumerate(out_cols):
                                 ws.write(current_row, c_idx, c_name, head_thu_fmt)
                             current_row += 1
@@ -8507,7 +8527,7 @@ def render_invoice_management():
                             # Bảng Chi
                             ws.merge_range(current_row, 0, current_row, 5, "II. DANH SÁCH CHI", section_chi_fmt)
                             current_row += 1
-                            in_cols = ['Tháng', 'Dự án nhỏ', 'Loại', 'Số HĐ', 'Diễn giải', 'Số tiền']
+                            in_cols = ['Tháng', 'Dự án', 'Loại', 'Số HĐ', 'Diễn giải', 'Số tiền']
                             for c_idx, c_name in enumerate(in_cols):
                                 ws.write(current_row, c_idx, c_name, head_chi_fmt)
                             current_row += 1
@@ -8524,11 +8544,11 @@ def render_invoice_management():
                             ws.merge_range(current_row, 0, current_row, 5, f"Ghi chú Chi: {note_chi}", note_chi_fmt)
                             current_row += 2
 
-                            # Bảng tổng hợp dự án nhỏ trong tháng
+                            # Bảng tổng hợp dự án trong tháng
                             if not df_project_summary.empty:
-                                ws.merge_range(current_row, 0, current_row, 5, "III. TỔNG HỢP DỰ ÁN NHỎ TRONG THÁNG", section_thu_fmt)
+                                ws.merge_range(current_row, 0, current_row, 5, "III. TỔNG HỢP DỰ ÁN TRONG THÁNG", section_thu_fmt)
                                 current_row += 1
-                                proj_cols = ['Dự án nhỏ', 'Tổng Thu', 'Tổng Chi', 'Lợi Nhuận']
+                                proj_cols = ['Dự án', 'Tổng Thu', 'Tổng Chi', 'Lợi Nhuận']
                                 for c_idx, c_name in enumerate(proj_cols):
                                     ws.write(current_row, c_idx, c_name, head_thu_fmt)
                                 current_row += 1
@@ -8586,12 +8606,12 @@ def render_invoice_management():
             **📝 Cách nhập dữ liệu:**
             1. Chọn tháng/năm cần làm việc
             2. Nhấn nút "+" để thêm dòng mới
-            3. Nhập dự án nhỏ/tour/booking, diễn giải và số tiền (VD: 5000000 hoặc 5.000.000)
+            3. Nhập dự án/tour/booking, diễn giải và số tiền (VD: 5000000 hoặc 5.000.000)
             4. Dữ liệu tự động lưu khi bạn nhập
             
             **💡 Tính năng:**
             - Dữ liệu được lưu riêng theo từng tháng
-            - Tách được nhiều dự án nhỏ/tour/booking trong cùng 1 tháng
+            - Tách được nhiều dự án/tour/booking trong cùng 1 tháng
             - Tự động tính lợi nhuận = Thu - Chi
             - Xuất Excel báo cáo chi tiết
             - Xem tổng hợp tất cả các tháng ở phía dưới
