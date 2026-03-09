@@ -8231,6 +8231,73 @@ def render_invoice_management():
                 st.rerun()
         with col_metric2:
             st.metric("💸 Tổng Chi (Dự án đang chọn)", format_vnd(total_expense_project) + " VND")
+
+        # === CẢNH BÁO TRÙNG DỮ LIỆU TRONG DỰ ÁN NHỎ ===
+        dup_out_inv = (
+            edited_output_clean[
+                edited_output_clean['invoice_no'].astype(str).str.strip().ne("")
+            ]['invoice_no']
+            .astype(str)
+            .str.strip()
+            .value_counts()
+        )
+        dup_out_inv = dup_out_inv[dup_out_inv > 1]
+
+        dup_in_inv = (
+            edited_input_clean[
+                edited_input_clean['invoice_no'].astype(str).str.strip().ne("")
+            ]['invoice_no']
+            .astype(str)
+            .str.strip()
+            .value_counts()
+        )
+        dup_in_inv = dup_in_inv[dup_in_inv > 1]
+
+        out_amount_series = pd.to_numeric(edited_output_clean['amount'], errors='coerce').fillna(0)
+        dup_out_amt = out_amount_series[out_amount_series.ne(0)].value_counts()
+        dup_out_amt = dup_out_amt[dup_out_amt > 1]
+
+        in_amount_series = pd.to_numeric(edited_input_clean['amount'], errors='coerce').fillna(0)
+        dup_in_amt = in_amount_series[in_amount_series.ne(0)].value_counts()
+        dup_in_amt = dup_in_amt[dup_in_amt > 1]
+
+        out_inv_set = set(
+            edited_output_clean[edited_output_clean['invoice_no'].astype(str).str.strip().ne("")]['invoice_no']
+            .astype(str)
+            .str.strip()
+            .tolist()
+        )
+        in_inv_set = set(
+            edited_input_clean[edited_input_clean['invoice_no'].astype(str).str.strip().ne("")]['invoice_no']
+            .astype(str)
+            .str.strip()
+            .tolist()
+        )
+        dup_cross_inv = sorted(out_inv_set.intersection(in_inv_set))
+
+        if (not dup_out_inv.empty) or (not dup_in_inv.empty) or (not dup_out_amt.empty) or (not dup_in_amt.empty) or dup_cross_inv:
+            st.markdown("#### ⚠️ Cảnh báo trùng dữ liệu trong dự án nhỏ")
+
+            if not dup_out_inv.empty:
+                vals = ", ".join([f"{k} ({int(v)} lần)" for k, v in dup_out_inv.head(8).items()])
+                st.warning(f"[Thu] Trùng Số HĐ: {vals}")
+
+            if not dup_in_inv.empty:
+                vals = ", ".join([f"{k} ({int(v)} lần)" for k, v in dup_in_inv.head(8).items()])
+                st.warning(f"[Chi] Trùng Số HĐ: {vals}")
+
+            if not dup_out_amt.empty:
+                vals = ", ".join([f"{format_vnd(float(k))} ({int(v)} lần)" for k, v in dup_out_amt.head(8).items()])
+                st.warning(f"[Thu] Trùng Số tiền: {vals}")
+
+            if not dup_in_amt.empty:
+                vals = ", ".join([f"{format_vnd(float(k))} ({int(v)} lần)" for k, v in dup_in_amt.head(8).items()])
+                st.warning(f"[Chi] Trùng Số tiền: {vals}")
+
+            if dup_cross_inv:
+                vals = ", ".join(dup_cross_inv[:10])
+                st.warning(f"Số HĐ xuất hiện ở cả Thu và Chi trong cùng dự án: {vals}")
+            st.caption("Hệ thống chỉ cảnh báo để bạn rà soát, không tự động xóa dữ liệu.")
         
         # === BÁO CÁO DỰ ÁN NHỎ TRONG THÁNG ===
         st.markdown("---")
