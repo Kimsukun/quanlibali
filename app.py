@@ -3336,7 +3336,7 @@ def render_sidebar(comp):
             st.rerun()
         
         st.markdown("### 🗂️ Phân Hệ Quản Lý")
-        module = st.selectbox("Chọn chức năng:", ["🏠 Trang Chủ", "📅 Lịch Thông Báo", "🔖 Quản Lý Booking", "💰 Kiểm Soát Chi Phí", "💳 Quản Lý Công Nợ", "📦 Quản Lý Tour ", "🤝 Quản Lý Khách Hàng", "👥 Quản Lý Nhân Sự", "🔍 Tra cứu thông tin"], label_visibility="collapsed")
+        module = st.selectbox("Chọn chức năng:", ["🏠 Trang Chủ", "📅 Lịch Thông Báo", "🔖 Quản Lý Booking", "💰 Kiểm Soát Chi Phí", "💳 Quản Lý Công Nợ", "📦 Quản Lý Tour ", "🧾 Quản Lý Hóa Đơn", "🤝 Quản Lý Khách Hàng", "👥 Quản Lý Nhân Sự", "🔍 Tra cứu thông tin"], label_visibility="collapsed")
         
         menu = None
         if module == "💰 Kiểm Soát Chi Phí":
@@ -5147,7 +5147,7 @@ def render_tour_management():
     st.title("📦 Quản Lý Tour ")
     
     # Sử dụng Tabs theo yêu cầu
-    tab_est, tab_list_srv, tab_act, tab_hist, tab_rpt, tab_invoice = st.tabs(["📝 Dự Toán Chi Phí", "📋 Danh sách & Dịch vụ", "💸 Quyết Toán Tour", "📜 Lịch sử Tour", "📈 Tổng Hợp Lợi Nhuận", "🧾 Tính Hóa Đơn"])
+    tab_est, tab_list_srv, tab_act, tab_hist, tab_rpt = st.tabs(["📝 Dự Toán Chi Phí", "📋 Danh sách & Dịch vụ", "💸 Quyết Toán Tour", "📜 Lịch sử Tour", "📈 Tổng Hợp Lợi Nhuận"])
     
     # Lấy thông tin user hiện tại để lọc
     current_user_info_tour = st.session_state.get("user_info", {})
@@ -7419,16 +7419,20 @@ def render_tour_management():
             st.download_button("📥 Xuất báo cáo Excel", buffer_rpt.getvalue(), file_name_rpt, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         else:
             st.info("Chưa có dữ liệu tour.")
+
+def render_invoice_management():
+    st.title("🧾 Quản Lý Hóa Đơn")
     
-    # ---------------- TAB MỚI: TÍNH HÓA ĐƠN ----------------
-    with tab_invoice:
+    tab_reverse, tab_profit = st.tabs(["🧮 Tính Hóa Đơn Ngược", "💰 Tính Lợi Nhuận"])
+    
+    with tab_reverse:
         st.subheader("🧾 Tính Hóa Đơn Ngược")
         st.markdown("""<div style="background-color: #e3f2fd; padding: 15px; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid #2196F3;">
             <b>💡 Công cụ này giúp bạn:</b><br>
             • Tính ngược từ tổng tiền (đã bao gồm VAT và phí phục vụ) về giá gốc<br>
             • Hỗ trợ nhiều dòng phát sinh (mỗi dòng có % phí phục vụ riêng)<br>
             • Xuất Excel theo form bảng hóa đơn để gửi đối chiếu
-        </div>""", unsafe_allow_html=True)
+            </div>""", unsafe_allow_html=True)
 
         if "inv_total" not in st.session_state: st.session_state.inv_total = "0"
         if "inv_main_qty" not in st.session_state: st.session_state.inv_main_qty = 1
@@ -7546,6 +7550,7 @@ def render_tour_management():
             try:
                 total_str = st.session_state.inv_total.replace('.', '').replace(',', '').replace(' VND', '').strip()
                 total_amount = float(total_str) if total_str else 0.0
+                df_inv = pd.DataFrame(columns=["group", "amount", "vat_pct"])
 
                 if total_amount <= 0:
                     st.error("⚠️ Vui lòng nhập tổng tiền hợp lệ!")
@@ -7634,7 +7639,7 @@ def render_tour_management():
 
                     # --- BƯỚC 4: Tính VAT riêng cho từng nhóm ---
                     df_inv = pd.DataFrame(invoice_rows)
-                    
+                
                     def calc_vat_by_group(df, group_name):
                         """Tính VAT cho một nhóm (theo VAT từng dòng)."""
                         group_df = df[df['group'] == group_name].copy()
@@ -7643,13 +7648,13 @@ def render_tour_management():
                         group_vat = group_df['vat_amount'].sum()
                         group_df['total_amount'] = group_df['amount'] + group_df['vat_amount']
                         return group_df, group_subtotal, group_vat
-                    
+                
                     df_main, subtotal_main, vat_main = calc_vat_by_group(df_inv, "main")
                     df_incurred_final, subtotal_incurred, vat_incurred = calc_vat_by_group(df_inv, "incurred")
-                    
+                
                     # Gộp lại
                     df_result = pd.concat([df_main, df_incurred_final], ignore_index=True)
-                    
+                
                     # Tổng cộng
                     sub_total_check = df_result["amount"].sum()
                     vat_total_check = df_result["vat_amount"].sum()
@@ -7669,7 +7674,7 @@ def render_tour_management():
                     }
 
                     st.markdown("### 📊 Kết Quả Tính Toán")
-                    
+                
                     # --- HIỂN THỊ THEO NHÓM ---
                     st.markdown("#### 🏨 Nhóm 1: Dịch vụ Chính")
                     view_df_main = df_main.copy().reset_index(drop=True)
@@ -7692,7 +7697,7 @@ def render_tour_management():
                     c1.metric("Tổng trước VAT", format_vnd(subtotal_main) + " VND")
                     c2.metric("VAT", format_vnd(vat_main) + " VND")
                     c3.metric("Tổng sau VAT", format_vnd(subtotal_main + vat_main) + " VND")
-                    
+                
                     # Hiển thị nhóm phát sinh nếu có
                     if not df_incurred_final.empty:
                         st.write("")
@@ -7717,7 +7722,7 @@ def render_tour_management():
                         c1.metric("Tổng trước VAT", format_vnd(subtotal_incurred) + " VND")
                         c2.metric("VAT", format_vnd(vat_incurred) + " VND")
                         c3.metric("Tổng sau VAT", format_vnd(subtotal_incurred + vat_incurred) + " VND")
-                    
+                
                     # Tổng kết
                     st.write("")
                     st.markdown("---")
@@ -7803,14 +7808,14 @@ def render_tour_management():
                     st.error(f"❌ Lỗi xuất Excel: {str(e)}")
 
         with st.expander("📖 Giải thích công thức tính toán"):
-            st.markdown("""
+                st.markdown("""
             ### Công thức đang dùng (tách VAT theo nhóm)
-
+    
             **BƯỚC 1: Tính tổng trước VAT**
             ```
             Tổng trước VAT = Tổng thanh toán / (1 + VAT%)
             ```
-
+    
             **BƯỚC 2: Tính chi phí phát sinh (mỗi dòng có % phí DV riêng)**
             ```
             Với mỗi dòng phát sinh i:
@@ -7825,14 +7830,14 @@ def render_tour_management():
             Tổng phát sinh có phí = Σ(Tổng có phí_i)
                         Tổng phát sinh sau VAT = Σ(Tổng sau VAT_i)
             ```
-
+    
             **BƯỚC 3: Tính dịch vụ chính (có phí DV)**
             ```
                         Tổng DV chính có phí = (Tổng thanh toán - Tổng phát sinh sau VAT) / (1 + VAT dịch vụ chính%)
             Tổng DV chính gốc = Tổng DV chính có phí / (1 + Phí DV chính%)
             Đơn giá DV chính = Tổng DV chính gốc / Số lượng
             ```
-
+    
             **BƯỚC 4: Tính VAT riêng cho từng nhóm**
             ```
             VAT Nhóm 1 (DV chính) = (DV chính gốc + Phí DV chính) × VAT%
@@ -7840,7 +7845,7 @@ def render_tour_management():
             
             Tổng VAT = VAT Nhóm 1 + VAT Nhóm 2
             ```
-
+    
             **💡 Lợi ích:**  
             - Mỗi dòng phát sinh có thể có % phí phục vụ riêng (linh hoạt)
             - Mỗi dòng phát sinh có thể có VAT riêng (vd 8%, 10%)
@@ -7848,7 +7853,688 @@ def render_tour_management():
             - Dễ đối chiếu với hóa đơn có nhiều nhóm dịch vụ  
             - Phù hợp với quy định thuế hiện hành
             """)
+    
+    with tab_profit:
+        st.subheader("💰 Tính Lợi Nhuận")
+        st.markdown("""<div style="background-color: #e8f5e9; padding: 15px; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid #4CAF50;">
+            <b>💡 Công cụ này giúp bạn:</b><br>
+            • Theo dõi các hóa đơn đầu ra (thu) và hóa đơn đầu vào (chi)<br>
+            • Tính toán lợi nhuận tự động từ hiệu số thu - chi<br>
+            • Ghi chú rõ ràng mã/số hóa đơn để dễ đối chiếu<br>
+            • Quản lý theo tháng/năm để dễ dàng theo dõi
+        </div>""", unsafe_allow_html=True)
+    
+        # === KHỞI TẠO SESSION STATE ===
+        if "profit_output_invoices" not in st.session_state:
+            st.session_state.profit_output_invoices = pd.DataFrame(columns=["period", "project", "invoice_no", "description", "amount"])
+        if "profit_input_invoices" not in st.session_state:
+            st.session_state.profit_input_invoices = pd.DataFrame(columns=["period", "project", "invoice_no", "description", "amount"])
+        
+        # Migration: tách cột Số HĐ và Diễn giải
+        if 'invoice_no' not in st.session_state.profit_output_invoices.columns:
+            st.session_state.profit_output_invoices['invoice_no'] = ""
+        if 'invoice_no' not in st.session_state.profit_input_invoices.columns:
+            st.session_state.profit_input_invoices['invoice_no'] = ""
+        if 'project' not in st.session_state.profit_output_invoices.columns:
+            st.session_state.profit_output_invoices['project'] = "Tổng tháng"
+        if 'project' not in st.session_state.profit_input_invoices.columns:
+            st.session_state.profit_input_invoices['project'] = "Tổng tháng"
+        
+        # === CHỌN THÁNG/NĂM ===
+        from datetime import datetime
+        current_date = datetime.now()
+        
+        col_m, col_y = st.columns(2)
+        with col_m:
+            sel_month = st.selectbox(
+                "📅 Tháng",
+                options=list(range(1, 13)),
+                index=current_date.month - 1,
+                format_func=lambda x: f"Tháng {x:02d}",
+                key="profit_sel_month"
+            )
+        with col_y:
+            year_opts = list(range(current_date.year - 5, current_date.year + 2))
+            sel_year = st.selectbox(
+                "📅 Năm",
+                options=year_opts,
+                index=year_opts.index(current_date.year),
+                key="profit_sel_year"
+            )
+        
+        selected_period = f"{sel_month:02d}/{sel_year}"
+        st.info(f"🗓️ Đang làm việc với tháng: **{selected_period}**")
 
+        # Đặt tên báo cáo ở đầu tab
+        if "profit_report_name" not in st.session_state:
+            st.session_state.profit_report_name = "Báo cáo lợi nhuận"
+        if "profit_meta_edit_mode" not in st.session_state:
+            st.session_state.profit_meta_edit_mode = False
+        report_name = st.text_input(
+            "🏷️ Tên báo cáo",
+            key="profit_report_name",
+            help="Tên hiển thị trên file Excel",
+            disabled=not st.session_state.profit_meta_edit_mode
+        )
+
+        # Tạo nhanh dự án nhỏ trong tháng đang chọn
+        if "profit_new_project_name" not in st.session_state:
+            st.session_state.profit_new_project_name = ""
+        if "profit_new_project_name_clear" not in st.session_state:
+            st.session_state.profit_new_project_name_clear = False
+        if st.session_state.profit_new_project_name_clear:
+            st.session_state.profit_new_project_name = ""
+            st.session_state.profit_new_project_name_clear = False
+
+        col_add_proj_name, col_add_proj_btn = st.columns([4, 1])
+        with col_add_proj_name:
+            st.text_input(
+                "📌 Tên dự án nhỏ cần thêm",
+                key="profit_new_project_name",
+                placeholder="VD: Tour Hạ Long 20/08 hoặc Booking Lẻ Anh A"
+            )
+        with col_add_proj_btn:
+            st.write("")
+            if st.button("➕ Thêm dự án", use_container_width=True, key="profit_add_project_btn"):
+                new_project = str(st.session_state.profit_new_project_name or "").strip()
+                if not new_project:
+                    st.warning("Vui lòng nhập tên dự án trước khi thêm.")
+                else:
+                    def append_project_seed(df_src: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
+                        df_work = df_src.copy()
+                        if df_work.empty:
+                            df_work = pd.DataFrame(columns=["period", "project", "invoice_no", "description", "amount"])
+                        if 'project' not in df_work.columns:
+                            df_work['project'] = "Tổng tháng"
+                        if 'invoice_no' not in df_work.columns:
+                            df_work['invoice_no'] = ""
+
+                        mask = (
+                            df_work['period'].astype(str).eq(selected_period)
+                            & df_work['project'].astype(str).str.strip().eq(new_project)
+                        )
+                        if mask.any():
+                            return df_work, False
+
+                        new_row = pd.DataFrame([
+                            {"period": selected_period, "project": new_project, "invoice_no": "", "description": "", "amount": 0.0}
+                        ])
+                        return pd.concat([df_work, new_row], ignore_index=True), True
+
+                    out_full_new, out_added = append_project_seed(st.session_state.profit_output_invoices)
+                    in_full_new, in_added = append_project_seed(st.session_state.profit_input_invoices)
+
+                    st.session_state.profit_output_invoices = out_full_new
+                    st.session_state.profit_input_invoices = in_full_new
+
+                    if out_added or in_added:
+                        if "profit_selected_project_by_period" not in st.session_state:
+                            st.session_state.profit_selected_project_by_period = {}
+                        st.session_state.profit_selected_project_by_period[selected_period] = new_project
+                        st.session_state.profit_current_scope_output = None
+                        st.session_state.profit_current_scope_input = None
+                        st.session_state.profit_new_project_name_clear = True
+                        st.success(f"Đã thêm dự án '{new_project}' cho tháng {selected_period}.")
+                        st.rerun()
+                    else:
+                        st.info("Dự án này đã tồn tại trong tháng hiện tại.")
+
+        # Chọn dự án nhỏ đang nhập (mỗi lần nhập là cho 1 dự án)
+        if "profit_selected_project_by_period" not in st.session_state:
+            st.session_state.profit_selected_project_by_period = {}
+
+        period_projects = set()
+        if not st.session_state.profit_output_invoices.empty:
+            period_projects.update(
+                st.session_state.profit_output_invoices.loc[
+                    st.session_state.profit_output_invoices['period'] == selected_period, 'project'
+                ].astype(str).str.strip().tolist()
+            )
+        if not st.session_state.profit_input_invoices.empty:
+            period_projects.update(
+                st.session_state.profit_input_invoices.loc[
+                    st.session_state.profit_input_invoices['period'] == selected_period, 'project'
+                ].astype(str).str.strip().tolist()
+            )
+        period_projects = {p for p in period_projects if p}
+
+        if not period_projects:
+            period_projects = {"Dự án 1"}
+
+        project_options_sorted = sorted(period_projects)
+        remembered_project = st.session_state.profit_selected_project_by_period.get(selected_period)
+        if remembered_project not in project_options_sorted:
+            remembered_project = project_options_sorted[0]
+            st.session_state.profit_selected_project_by_period[selected_period] = remembered_project
+
+        selected_project = st.selectbox(
+            "🧩 Dự án nhỏ đang nhập",
+            options=project_options_sorted,
+            index=project_options_sorted.index(remembered_project),
+            key=f"profit_selected_project_{selected_period}"
+        )
+        st.session_state.profit_selected_project_by_period[selected_period] = selected_project
+        st.caption("Dữ liệu bạn nhập bên dưới sẽ thuộc đúng dự án này. Tổng kết tháng sẽ tự cộng tất cả dự án nhỏ.")
+
+        def is_profit_row_valid(df: pd.DataFrame) -> pd.Series:
+            """Giữ dòng có mô tả hoặc có số tiền khác 0 để tránh mất dữ liệu khi nhập từng bước."""
+            if df.empty:
+                return pd.Series([], dtype=bool)
+            inv_ok = df['invoice_no'].astype(str).str.strip().ne("") if 'invoice_no' in df.columns else pd.Series([False] * len(df), index=df.index)
+            desc_ok = df['description'].astype(str).str.strip().ne("")
+            amt = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
+            amt_ok = amt.ne(0)
+            return inv_ok | desc_ok | amt_ok
+
+        def clean_profit_amount(x):
+            if isinstance(x, (int, float)):
+                return float(x)
+            if x is None:
+                return 0.0
+            raw = str(x).strip()
+            if not raw:
+                return 0.0
+            try:
+                return float(raw.replace('.', '').replace(',', '').replace(' VND', '').strip())
+            except Exception:
+                return 0.0
+
+        if "profit_current_scope_output" not in st.session_state:
+            st.session_state.profit_current_scope_output = None
+        if "profit_current_scope_input" not in st.session_state:
+            st.session_state.profit_current_scope_input = None
+        if "profit_output_temp" not in st.session_state:
+            st.session_state.profit_output_temp = pd.DataFrame(columns=["period", "project", "invoice_no", "description", "amount"])
+        if "profit_input_temp" not in st.session_state:
+            st.session_state.profit_input_temp = pd.DataFrame(columns=["period", "project", "invoice_no", "description", "amount"])
+        if 'invoice_no' not in st.session_state.profit_output_temp.columns:
+            st.session_state.profit_output_temp['invoice_no'] = ""
+        if 'invoice_no' not in st.session_state.profit_input_temp.columns:
+            st.session_state.profit_input_temp['invoice_no'] = ""
+
+        selected_scope = f"{selected_period}::{selected_project}"
+
+        # Đồng bộ temp theo period + project
+        if st.session_state.profit_current_scope_output != selected_scope:
+            df_out_seed = st.session_state.profit_output_invoices.copy()
+            df_out_seed = (
+                df_out_seed[
+                    (df_out_seed['period'] == selected_period)
+                    & (df_out_seed['project'].astype(str).str.strip() == selected_project)
+                ]
+                if not df_out_seed.empty
+                else pd.DataFrame(columns=["period", "project", "invoice_no", "description", "amount"])
+            )
+            if df_out_seed.empty:
+                df_out_seed = pd.DataFrame([{"period": selected_period, "project": selected_project, "invoice_no": "", "description": "", "amount": 0.0}])
+            st.session_state.profit_output_temp = df_out_seed[['period', 'project', 'invoice_no', 'description', 'amount']].reset_index(drop=True)
+            st.session_state.profit_current_scope_output = selected_scope
+
+        if st.session_state.profit_current_scope_input != selected_scope:
+            df_in_seed = st.session_state.profit_input_invoices.copy()
+            df_in_seed = (
+                df_in_seed[
+                    (df_in_seed['period'] == selected_period)
+                    & (df_in_seed['project'].astype(str).str.strip() == selected_project)
+                ]
+                if not df_in_seed.empty
+                else pd.DataFrame(columns=["period", "project", "invoice_no", "description", "amount"])
+            )
+            if df_in_seed.empty:
+                df_in_seed = pd.DataFrame([{"period": selected_period, "project": selected_project, "invoice_no": "", "description": "", "amount": 0.0}])
+            st.session_state.profit_input_temp = df_in_seed[['period', 'project', 'invoice_no', 'description', 'amount']].reset_index(drop=True)
+            st.session_state.profit_current_scope_input = selected_scope
+        
+        st.markdown("---")
+        
+        # === BẢNG HÓA ĐƠN ĐẦU RA (THU) ===
+        st.markdown("### 📤 Hóa Đơn Đầu Ra (Thu)")
+        st.caption("💡 Sau khi nhập số tiền, nhấn **Enter** hoặc click ra ngoài ô. Số sẽ tự động định dạng thành 1.000.000")
+        
+        # Dùng temp state theo period để tránh mất dữ liệu khi nhập lần đầu
+        df_period_output = st.session_state.profit_output_temp.copy()
+        if 'project' not in df_period_output.columns:
+            df_period_output['project'] = "Tổng tháng"
+        if 'invoice_no' not in df_period_output.columns:
+            df_period_output['invoice_no'] = ""
+        
+        # Format cho display
+        df_display_output = df_period_output.copy().reset_index(drop=True)
+        df_display_output['amount_display'] = df_display_output['amount'].apply(
+            lambda x: format_vnd(float(x) if x else 0)
+        )
+        
+        edited_output = st.data_editor(
+            df_display_output[['period', 'invoice_no', 'description', 'amount_display']].reset_index(drop=True),
+            num_rows="dynamic",
+            column_config={
+                "period": st.column_config.TextColumn("Tháng", default=selected_period, disabled=True, width="small"),
+                "invoice_no": st.column_config.TextColumn("Số HĐ", required=False, width="medium", help="VD: HD001"),
+                "description": st.column_config.TextColumn("Diễn giải", required=False, width="large", help="VD: Bán hàng cho khách A"),
+                "amount_display": st.column_config.TextColumn("Số tiền (VND)", width="medium", help="Nhập: 5000000 hoặc 5.000.000")
+            },
+            use_container_width=True,
+            hide_index=True,
+            key="editor_output_profit"
+        )
+        
+        # Clean data từ editor
+        edited_output['amount'] = edited_output['amount_display'].apply(clean_profit_amount)
+        edited_output['project'] = selected_project
+        edited_output = edited_output[['period', 'project', 'invoice_no', 'description', 'amount']]
+        edited_output['period'] = edited_output['period'].fillna(selected_period)
+        edited_output['project'] = selected_project
+        edited_output['invoice_no'] = edited_output['invoice_no'].fillna('').astype(str).str.strip()
+
+        # So sánh với temp cũ, nếu đổi thì lưu và rerun như tab Dự Toán
+        old_out = st.session_state.profit_output_temp[['period', 'project', 'invoice_no', 'description', 'amount']].reset_index(drop=True).fillna('')
+        new_out = edited_output[['period', 'project', 'invoice_no', 'description', 'amount']].reset_index(drop=True).fillna('')
+        if len(old_out) != len(new_out) or not old_out.equals(new_out):
+            st.session_state.profit_output_temp = edited_output.copy()
+            df_other_output = st.session_state.profit_output_invoices[
+                ~(
+                    (st.session_state.profit_output_invoices['period'] == selected_period)
+                    & (st.session_state.profit_output_invoices['project'].astype(str).str.strip() == selected_project)
+                )
+            ]
+            st.session_state.profit_output_invoices = pd.concat([df_other_output, edited_output], ignore_index=True)
+            st.rerun()
+
+        # Lọc cho mục đích tính toán
+        edited_output_clean = edited_output[is_profit_row_valid(edited_output)].copy()
+        
+        # Tính tổng thu dự án đang nhập (chỉ tính dòng có nội dung)
+        total_revenue_project = edited_output_clean['amount'].sum()
+        
+        col_refresh1, col_metric1 = st.columns([1, 5])
+        with col_refresh1:
+            if st.button("🔄", key="refresh_output", help="Làm mới để định dạng số tiền"):
+                st.rerun()
+        with col_metric1:
+            st.metric("💰 Tổng Thu (Dự án đang chọn)", format_vnd(total_revenue_project) + " VND")
+        
+        st.markdown("---")
+        
+        # === BẢNG HÓA ĐƠN ĐẦU VÀO (CHI) ===
+        st.markdown("### 📥 Hóa Đơn Đầu Vào (Chi)")
+        st.caption("💡 Sau khi nhập số tiền, nhấn **Enter** hoặc click ra ngoài ô. Số sẽ tự động định dạng thành 1.000.000")
+        
+        # Dùng temp state theo period để tránh mất dữ liệu khi nhập lần đầu
+        df_period_input = st.session_state.profit_input_temp.copy()
+        if 'project' not in df_period_input.columns:
+            df_period_input['project'] = "Tổng tháng"
+        if 'invoice_no' not in df_period_input.columns:
+            df_period_input['invoice_no'] = ""
+        
+        # Format cho display
+        df_display_input = df_period_input.copy().reset_index(drop=True)
+        df_display_input['amount_display'] = df_display_input['amount'].apply(
+            lambda x: format_vnd(float(x) if x else 0)
+        )
+        
+        edited_input = st.data_editor(
+            df_display_input[['period', 'invoice_no', 'description', 'amount_display']].reset_index(drop=True),
+            num_rows="dynamic",
+            column_config={
+                "period": st.column_config.TextColumn("Tháng", default=selected_period, disabled=True, width="small"),
+                "invoice_no": st.column_config.TextColumn("Số HĐ", required=False, width="medium", help="VD: PO001"),
+                "description": st.column_config.TextColumn("Diễn giải", required=False, width="large", help="VD: Mua hàng từ NCC B"),
+                "amount_display": st.column_config.TextColumn("Số tiền (VND)", width="medium", help="Nhập: 3000000 hoặc 3.000.000")
+            },
+            use_container_width=True,
+            hide_index=True,
+            key="editor_input_profit"
+        )
+        
+        # Clean data từ editor
+        edited_input['amount'] = edited_input['amount_display'].apply(clean_profit_amount)
+        edited_input['project'] = selected_project
+        edited_input = edited_input[['period', 'project', 'invoice_no', 'description', 'amount']]
+        edited_input['period'] = edited_input['period'].fillna(selected_period)
+        edited_input['project'] = selected_project
+        edited_input['invoice_no'] = edited_input['invoice_no'].fillna('').astype(str).str.strip()
+
+        # So sánh với temp cũ, nếu đổi thì lưu và rerun như tab Dự Toán
+        old_in = st.session_state.profit_input_temp[['period', 'project', 'invoice_no', 'description', 'amount']].reset_index(drop=True).fillna('')
+        new_in = edited_input[['period', 'project', 'invoice_no', 'description', 'amount']].reset_index(drop=True).fillna('')
+        if len(old_in) != len(new_in) or not old_in.equals(new_in):
+            st.session_state.profit_input_temp = edited_input.copy()
+            df_other_input = st.session_state.profit_input_invoices[
+                ~(
+                    (st.session_state.profit_input_invoices['period'] == selected_period)
+                    & (st.session_state.profit_input_invoices['project'].astype(str).str.strip() == selected_project)
+                )
+            ]
+            st.session_state.profit_input_invoices = pd.concat([df_other_input, edited_input], ignore_index=True)
+            st.rerun()
+
+        # Lọc cho mục đích tính toán
+        edited_input_clean = edited_input[is_profit_row_valid(edited_input)].copy()
+        
+        # Tính tổng chi dự án đang nhập (chỉ tính dòng có nội dung)
+        total_expense_project = edited_input_clean['amount'].sum()
+
+        # Tính tổng tháng = tổng của tất cả dự án nhỏ trong tháng
+        df_month_output = st.session_state.profit_output_invoices.copy()
+        df_month_input = st.session_state.profit_input_invoices.copy()
+        df_month_output = df_month_output[df_month_output['period'] == selected_period] if not df_month_output.empty else pd.DataFrame(columns=['period', 'project', 'invoice_no', 'description', 'amount'])
+        df_month_input = df_month_input[df_month_input['period'] == selected_period] if not df_month_input.empty else pd.DataFrame(columns=['period', 'project', 'invoice_no', 'description', 'amount'])
+        df_month_output_valid = df_month_output[is_profit_row_valid(df_month_output)] if not df_month_output.empty else pd.DataFrame(columns=['period', 'project', 'invoice_no', 'description', 'amount'])
+        df_month_input_valid = df_month_input[is_profit_row_valid(df_month_input)] if not df_month_input.empty else pd.DataFrame(columns=['period', 'project', 'invoice_no', 'description', 'amount'])
+
+        total_revenue_month = df_month_output_valid['amount'].sum() if not df_month_output_valid.empty else 0
+        total_expense_month = df_month_input_valid['amount'].sum() if not df_month_input_valid.empty else 0
+        
+        col_refresh2, col_metric2 = st.columns([1, 5])
+        with col_refresh2:
+            if st.button("🔄", key="refresh_input", help="Làm mới để định dạng số tiền"):
+                st.rerun()
+        with col_metric2:
+            st.metric("💸 Tổng Chi (Dự án đang chọn)", format_vnd(total_expense_project) + " VND")
+        
+        # === BÁO CÁO DỰ ÁN NHỎ TRONG THÁNG ===
+        st.markdown("---")
+        st.markdown("#### 🧩 Báo Cáo Dự Án Nhỏ Trong Tháng")
+
+        def build_project_amount_table(df_src: pd.DataFrame, amount_col_name: str) -> pd.DataFrame:
+            if df_src.empty:
+                return pd.DataFrame(columns=['project', amount_col_name])
+            projects = sorted(df_src['project'].astype(str).fillna('Tổng tháng').unique())
+            rows = []
+            for proj in projects:
+                proj_mask = df_src['project'].astype(str) == proj
+                proj_values = pd.Series(pd.to_numeric(df_src.loc[proj_mask, 'amount'], errors='coerce'))
+                proj_amt = proj_values.fillna(0).sum()
+                rows.append({'project': proj, amount_col_name: proj_amt})
+            return pd.DataFrame(rows)
+
+        out_by_project = build_project_amount_table(df_month_output_valid, 'Tổng Thu')
+        in_by_project = build_project_amount_table(df_month_input_valid, 'Tổng Chi')
+
+        if not out_by_project.empty or not in_by_project.empty:
+            df_project_summary = pd.merge(out_by_project, in_by_project, on='project', how='outer').fillna(0)
+            df_project_summary['Lợi Nhuận'] = df_project_summary['Tổng Thu'] - df_project_summary['Tổng Chi']
+            df_project_summary = df_project_summary.sort_values('Lợi Nhuận', ascending=False).reset_index(drop=True)
+
+            df_project_show = df_project_summary.copy()
+            df_project_show = df_project_show.rename(columns={'project': 'Dự án nhỏ'})
+            df_project_show['Tổng Thu'] = df_project_show['Tổng Thu'].apply(lambda x: format_vnd(x) + " VND")
+            df_project_show['Tổng Chi'] = df_project_show['Tổng Chi'].apply(lambda x: format_vnd(x) + " VND")
+            df_project_show['Lợi Nhuận'] = df_project_show['Lợi Nhuận'].apply(lambda x: format_vnd(x) + " VND")
+            st.dataframe(df_project_show, use_container_width=True, hide_index=True)
+        else:
+            df_project_summary = pd.DataFrame(columns=['project', 'Tổng Thu', 'Tổng Chi', 'Lợi Nhuận'])
+            st.info("Chưa có dữ liệu dự án nhỏ trong tháng này.")
+
+        # === TÍNH LỢI NHUẬN ===
+        st.markdown("---")
+        st.markdown(f"### 📊 Kết Quả - Tháng {selected_period}")
+
+        profit_amount = total_revenue_month - total_expense_month
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("💰 Tổng Thu tháng", format_vnd(total_revenue_month) + " VND")
+        c2.metric("💸 Tổng Chi tháng", format_vnd(total_expense_month) + " VND")
+        c3.metric("📈 Lợi Nhuận", format_vnd(profit_amount) + " VND", 
+                 delta="Lãi" if profit_amount >= 0 else "Lỗ")
+        
+        # === CHI TIẾT ===
+        st.markdown("---")
+        st.markdown("#### 📋 Chi Tiết Hóa Đơn")
+        
+        col_detail1, col_detail2 = st.columns(2)
+        
+        with col_detail1:
+            st.markdown("**📤 Đầu Ra (Thu):**")
+            detail_output = df_month_output_valid.copy()
+            if not detail_output.empty:
+                for _, row in detail_output.iterrows():
+                    inv = str(row.get('invoice_no', '') or '').strip()
+                    desc = str(row.get('description', '') or '').strip()
+                    inv_text = f"{inv} - " if inv else ""
+                    st.write(f"• [{row['project']}] {inv_text}{desc}: {format_vnd(row['amount'])} VND")
+            else:
+                st.info("Chưa có hóa đơn đầu ra")
+        
+        with col_detail2:
+            st.markdown("**📥 Đầu Vào (Chi):**")
+            detail_input = df_month_input_valid.copy()
+            if not detail_input.empty:
+                for _, row in detail_input.iterrows():
+                    inv = str(row.get('invoice_no', '') or '').strip()
+                    desc = str(row.get('description', '') or '').strip()
+                    inv_text = f"{inv} - " if inv else ""
+                    st.write(f"• [{row['project']}] {inv_text}{desc}: {format_vnd(row['amount'])} VND")
+            else:
+                st.info("Chưa có hóa đơn đầu vào")
+        
+        # === TỔNG HỢP TẤT CẢ CÁC THÁNG ===
+        df_all_output_full = st.session_state.profit_output_invoices
+        df_all_input_full = st.session_state.profit_input_invoices
+        
+        # Lọc bỏ dòng rỗng (mô tả rỗng và số tiền = 0)
+        df_all_output_valid = df_all_output_full[is_profit_row_valid(df_all_output_full)] if not df_all_output_full.empty else pd.DataFrame()
+        df_all_input_valid = df_all_input_full[is_profit_row_valid(df_all_input_full)] if not df_all_input_full.empty else pd.DataFrame()
+        
+        if not df_all_output_valid.empty or not df_all_input_valid.empty:
+            st.markdown("---")
+            st.markdown("#### 📈 Tổng Hợp Tất Cả Các Tháng")
+            
+            # Lấy danh sách tất cả các period
+            all_periods_set = set()
+            if not df_all_output_valid.empty:
+                all_periods_set.update(df_all_output_valid['period'].unique())
+            if not df_all_input_valid.empty:
+                all_periods_set.update(df_all_input_valid['period'].unique())
+            
+            # Tạo summary table
+            summary_rows = []
+            for p in sorted(all_periods_set, reverse=True):
+                p_revenue = df_all_output_valid[df_all_output_valid['period'] == p]['amount'].sum() if not df_all_output_valid.empty else 0
+                p_expense = df_all_input_valid[df_all_input_valid['period'] == p]['amount'].sum() if not df_all_input_valid.empty else 0
+                p_profit = p_revenue - p_expense
+                
+                summary_rows.append({
+                    "Tháng/Năm": p,
+                    "Tổng Thu": format_vnd(p_revenue) + " VND",
+                    "Tổng Chi": format_vnd(p_expense) + " VND",
+                    "Lợi Nhuận": format_vnd(p_profit) + " VND"
+                })
+            
+            if summary_rows:
+                df_summary = pd.DataFrame(summary_rows)
+                st.dataframe(df_summary, use_container_width=True, hide_index=True)
+        
+        # === NÚT THAO TÁC ===
+        st.markdown("---")
+        st.markdown("### 🛠️ Thao Tác")
+
+        # Ghi chú khi xuất Excel
+        if "profit_note_thu" not in st.session_state:
+            st.session_state.profit_note_thu = "Ghi chú Thu"
+        if "profit_note_chi" not in st.session_state:
+            st.session_state.profit_note_chi = "Ghi chú Chi"
+
+        c_note_thu, c_note_chi = st.columns([1, 1])
+        with c_note_thu:
+            note_thu = st.text_input(
+                "📝 Ghi chú Thu",
+                key="profit_note_thu",
+                disabled=not st.session_state.profit_meta_edit_mode
+            )
+        with c_note_chi:
+            note_chi = st.text_input(
+                "📝 Ghi chú Chi",
+                key="profit_note_chi",
+                disabled=not st.session_state.profit_meta_edit_mode
+            )
+
+        col_meta_btn1, col_meta_btn2 = st.columns(2)
+        with col_meta_btn1:
+            if st.session_state.profit_meta_edit_mode:
+                if st.button("💾 Lưu thông tin báo cáo", use_container_width=True, key="profit_meta_save_btn"):
+                    st.session_state.profit_meta_edit_mode = False
+                    st.success("✅ Đã lưu thông tin báo cáo")
+                    st.rerun()
+        with col_meta_btn2:
+            if not st.session_state.profit_meta_edit_mode:
+                if st.button("✏️ Chỉnh sửa thông tin báo cáo", use_container_width=True, key="profit_meta_edit_btn"):
+                    st.session_state.profit_meta_edit_mode = True
+                    st.rerun()
+        
+        col_btn1, col_btn2 = st.columns(2)
+        
+        with col_btn1:
+            if st.button("📥 Xuất Excel", use_container_width=True, type="primary"):
+                try:
+                    # Chuẩn bị 2 bảng riêng: Thu và Chi
+                    df_exp_out = df_month_output_valid[['period', 'project', 'invoice_no', 'description', 'amount']].copy() if not df_month_output_valid.empty else pd.DataFrame(columns=['period', 'project', 'invoice_no', 'description', 'amount'])
+                    df_exp_in = df_month_input_valid[['period', 'project', 'invoice_no', 'description', 'amount']].copy() if not df_month_input_valid.empty else pd.DataFrame(columns=['period', 'project', 'invoice_no', 'description', 'amount'])
+
+                    if not df_exp_out.empty or not df_exp_in.empty:
+                        buffer_exp = io.BytesIO()
+                        with pd.ExcelWriter(buffer_exp, engine='xlsxwriter') as writer:
+                            wb = writer.book
+                            ws = wb.add_worksheet('Lợi Nhuận')
+
+                            # Formats chung
+                            title_fmt = wb.add_format({'bold': True, 'font_size': 14, 'align': 'center', 'font_name': 'Times New Roman'})
+                            text_fmt = wb.add_format({'border': 1, 'font_name': 'Times New Roman'})
+                            num_fmt = wb.add_format({'border': 1, 'num_format': '#,##0', 'font_name': 'Times New Roman'})
+                            head_thu_fmt = wb.add_format({'bold': True, 'border': 1, 'align': 'center', 'bg_color': '#C8E6C9', 'font_name': 'Times New Roman'})
+                            head_chi_fmt = wb.add_format({'bold': True, 'border': 1, 'align': 'center', 'bg_color': '#FFCDD2', 'font_name': 'Times New Roman'})
+                            section_thu_fmt = wb.add_format({'bold': True, 'border': 1, 'align': 'left', 'bg_color': '#E8F5E9', 'font_name': 'Times New Roman'})
+                            section_chi_fmt = wb.add_format({'bold': True, 'border': 1, 'align': 'left', 'bg_color': '#FFEBEE', 'font_name': 'Times New Roman'})
+                            note_thu_fmt = wb.add_format({'italic': True, 'border': 1, 'font_color': '#1B5E20', 'bg_color': '#F1F8E9', 'font_name': 'Times New Roman'})
+                            note_chi_fmt = wb.add_format({'italic': True, 'border': 1, 'font_color': '#B71C1C', 'bg_color': '#FFEBEE', 'font_name': 'Times New Roman'})
+
+                            report_title = str(report_name).strip() if report_name else "Báo cáo lợi nhuận"
+
+                            # Title
+                            ws.merge_range('A1:F1', f'{report_title} - {selected_period}', title_fmt)
+                            ws.write('A2', f'Tổng Thu: {format_vnd(total_revenue_month)} VND', text_fmt)
+                            ws.write('B2', f'Tổng Chi: {format_vnd(total_expense_month)} VND', text_fmt)
+                            ws.write('C2', f'Lợi Nhuận: {format_vnd(profit_amount)} VND', section_thu_fmt)
+
+                            # Bảng Thu
+                            current_row = 3
+                            ws.merge_range(current_row, 0, current_row, 5, "I. DANH SÁCH THU", section_thu_fmt)
+                            current_row += 1
+                            out_cols = ['Tháng', 'Dự án nhỏ', 'Loại', 'Số HĐ', 'Diễn giải', 'Số tiền']
+                            for c_idx, c_name in enumerate(out_cols):
+                                ws.write(current_row, c_idx, c_name, head_thu_fmt)
+                            current_row += 1
+
+                            for _, row in df_exp_out.iterrows():
+                                ws.write(current_row, 0, str(row['period']), text_fmt)
+                                ws.write(current_row, 1, str(row['project']), text_fmt)
+                                ws.write(current_row, 2, 'Thu', text_fmt)
+                                ws.write(current_row, 3, str(row['invoice_no']), text_fmt)
+                                ws.write(current_row, 4, str(row['description']), text_fmt)
+                                ws.write_number(current_row, 5, float(row['amount']) if row['amount'] else 0.0, num_fmt)
+                                current_row += 1
+
+                            ws.merge_range(current_row, 0, current_row, 5, f"Ghi chú Thu: {note_thu}", note_thu_fmt)
+                            current_row += 2
+
+                            # Bảng Chi
+                            ws.merge_range(current_row, 0, current_row, 5, "II. DANH SÁCH CHI", section_chi_fmt)
+                            current_row += 1
+                            in_cols = ['Tháng', 'Dự án nhỏ', 'Loại', 'Số HĐ', 'Diễn giải', 'Số tiền']
+                            for c_idx, c_name in enumerate(in_cols):
+                                ws.write(current_row, c_idx, c_name, head_chi_fmt)
+                            current_row += 1
+
+                            for _, row in df_exp_in.iterrows():
+                                ws.write(current_row, 0, str(row['period']), text_fmt)
+                                ws.write(current_row, 1, str(row['project']), text_fmt)
+                                ws.write(current_row, 2, 'Chi', text_fmt)
+                                ws.write(current_row, 3, str(row['invoice_no']), text_fmt)
+                                ws.write(current_row, 4, str(row['description']), text_fmt)
+                                ws.write_number(current_row, 5, float(row['amount']) if row['amount'] else 0.0, num_fmt)
+                                current_row += 1
+
+                            ws.merge_range(current_row, 0, current_row, 5, f"Ghi chú Chi: {note_chi}", note_chi_fmt)
+                            current_row += 2
+
+                            # Bảng tổng hợp dự án nhỏ trong tháng
+                            if not df_project_summary.empty:
+                                ws.merge_range(current_row, 0, current_row, 5, "III. TỔNG HỢP DỰ ÁN NHỎ TRONG THÁNG", section_thu_fmt)
+                                current_row += 1
+                                proj_cols = ['Dự án nhỏ', 'Tổng Thu', 'Tổng Chi', 'Lợi Nhuận']
+                                for c_idx, c_name in enumerate(proj_cols):
+                                    ws.write(current_row, c_idx, c_name, head_thu_fmt)
+                                current_row += 1
+
+                                for _, row in df_project_summary.iterrows():
+                                    ws.write(current_row, 0, str(row['project']), text_fmt)
+                                    ws.write_number(current_row, 1, float(row['Tổng Thu']), num_fmt)
+                                    ws.write_number(current_row, 2, float(row['Tổng Chi']), num_fmt)
+                                    ws.write_number(current_row, 3, float(row['Lợi Nhuận']), num_fmt)
+                                    current_row += 1
+                            
+                            ws.set_column('A:A', 12)
+                            ws.set_column('B:B', 24)
+                            ws.set_column('C:C', 10)
+                            ws.set_column('D:D', 16)
+                            ws.set_column('E:E', 30)
+                            ws.set_column('F:F', 18)
+
+                            # Đăng ký sheet với writer để tránh warning
+                            writer.sheets['Lợi Nhuận'] = ws
+
+                        safe_name = re.sub(r'[\\/*?:"<>|]', "", (str(report_name).strip() if report_name else "BaoCao_LoiNhuan"))
+                        if not safe_name:
+                            safe_name = "BaoCao_LoiNhuan"
+                        
+                        st.download_button(
+                            "⬇️ Tải file Excel",
+                            data=buffer_exp.getvalue(),
+                            file_name=f"{safe_name}_{selected_period.replace('/', '_')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
+                        st.success("✅ File Excel sẵn sàng!")
+                    else:
+                        st.warning("⚠️ Không có dữ liệu để xuất!")
+                except Exception as e:
+                    st.error(f"❌ Lỗi: {str(e)}")
+        
+        with col_btn2:
+            if st.button("🗑️ Xóa dữ liệu tháng này", use_container_width=True, type="secondary"):
+                # Xóa data của tháng hiện tại
+                df_out_other = df_all_output_full[df_all_output_full['period'] != selected_period]
+                df_in_other = df_all_input_full[df_all_input_full['period'] != selected_period]
+                
+                st.session_state.profit_output_invoices = df_out_other
+                st.session_state.profit_input_invoices = df_in_other
+                
+                st.success(f"✅ Đã xóa dữ liệu tháng {selected_period}!")
+                time.sleep(0.5)
+                st.rerun()
+        
+        # === GHI CHÚ ===
+        with st.expander("💡 Hướng dẫn sử dụng"):
+            st.markdown("""
+            **📝 Cách nhập dữ liệu:**
+            1. Chọn tháng/năm cần làm việc
+            2. Nhấn nút "+" để thêm dòng mới
+            3. Nhập dự án nhỏ/tour/booking, diễn giải và số tiền (VD: 5000000 hoặc 5.000.000)
+            4. Dữ liệu tự động lưu khi bạn nhập
+            
+            **💡 Tính năng:**
+            - Dữ liệu được lưu riêng theo từng tháng
+            - Tách được nhiều dự án nhỏ/tour/booking trong cùng 1 tháng
+            - Tự động tính lợi nhuận = Thu - Chi
+            - Xuất Excel báo cáo chi tiết
+            - Xem tổng hợp tất cả các tháng ở phía dưới
+            
+            **🔢 Công thức:**
+            ```
+            Lợi Nhuận = Tổng Thu - Tổng Chi
+            ```
+            """)
+    
 def render_customer_management():
     st.title("🤝 Quản Lý Khách Hàng")
     
@@ -8177,6 +8863,8 @@ def main():
         render_debt_management()
     elif module == "📦 Quản Lý Tour ":
         render_tour_management()
+    elif module == "🧾 Quản Lý Hóa Đơn":
+        render_invoice_management()
     elif module == "🤝 Quản Lý Khách Hàng":
         render_customer_management()
     elif module == "👥 Quản Lý Nhân Sự":
