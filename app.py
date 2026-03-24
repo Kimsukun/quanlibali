@@ -39,8 +39,15 @@ import gspread
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
-import cv2
-import numpy as np
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+try:
+    import numpy as np
+except ImportError:
+    np = None
 
 # --- OCR CONFIGURATION ---
 try:
@@ -67,7 +74,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
 HAS_OPENPYXL = True
 HAS_XLSXWRITER = True
-HAS_CV = True
+HAS_CV = cv2 is not None and np is not None
 HAS_DOCX = True
 
 # --- CẤU HÌNH GOOGLE (Đã cập nhật theo thông tin của bạn) ---
@@ -370,6 +377,8 @@ def migrate_db_columns():
     except: pass
     try: c.execute("ALTER TABLE payment_reminders ADD COLUMN bank_holder TEXT")
     except: pass
+    try: c.execute("ALTER TABLE transaction_history ADD COLUMN payer_name TEXT")
+    except: pass
 
     # --- Bảng Lịch Trình Tour (Mới) ---
     try: c.execute('''CREATE TABLE IF NOT EXISTS tour_itineraries (
@@ -540,6 +549,7 @@ def migrate_db_columns():
         type TEXT,
         amount REAL,
         payment_method TEXT,
+        payer_name TEXT,
         note TEXT,
         created_at TEXT
     )''')
@@ -627,6 +637,7 @@ def init_db():
         type TEXT,
         amount REAL,
         payment_method TEXT,
+        payer_name TEXT,
         note TEXT,
         created_at TEXT
     )''')
@@ -908,7 +919,7 @@ st.markdown("""<style>
 @keyframes fadeIn { 0% { opacity: 0; transform: translateY(10px); } 100% { opacity: 1; transform: translateY(0); } }
 .stApp {
     background-color: #f8f9fa;
-    font-family: 'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-family: 'Times New Roman', Times, serif;
     animation: fadeIn 0.5s ease-in-out;
 }
 
@@ -1528,7 +1539,7 @@ def create_handover_docx(tour_info, guests, hotels, restaurants, sightseeings, c
     buffer = io.BytesIO()
     doc.save(buffer)
     buffer.seek(0)
-    return buffer
+    return buffer.getvalue()
 
 # --- HÀM ĐỌC SỐ TIỀN BẰNG CHỮ (VIETNAMESE) ---
 def read_money_vietnamese(amount):
@@ -1593,27 +1604,35 @@ def create_voucher_pdf(voucher_data):
     width, height = letter
     
     # --- SỬA LỖI FONT TIẾNG VIỆT TRÊN STREAMLIT CLOUD ---
-    font_name = 'Helvetica' # Fallback mặc định
-    font_name_bold = 'Helvetica-Bold'
+    font_name = 'Times-Roman' # Fallback mặc định
+    font_name_bold = 'Times-Bold'
     
     # Danh sách các cặp file font (Thường, Đậm) ưu tiên tìm kiếm
     # Bạn phải upload các file .ttf này lên cùng thư mục với app.py trên Streamlit Cloud
     font_candidates = [
         ("times.ttf", "timesbd.ttf", "TimesNewRoman"),  # Ưu tiên 1
         ("arial.ttf", "arialbd.ttf", "Arial"),          # Ưu tiên 2
-        ("Roboto-Regular.ttf", "Roboto-Bold.ttf", "Roboto") # Ưu tiên 3 (Nếu dùng Google Fonts)
+        ("Roboto-Regular.ttf", "Roboto-Bold.ttf", "Roboto"), # Ưu tiên 3 (Nếu dùng Google Fonts)
+        ("/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf", "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf", "LiberationSerif"),
+        ("/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf", "DejaVuSerif")
     ]
     
     font_registered = False
 
     # 1. Thử tìm font trong thư mục hiện tại (Dành cho Streamlit Cloud)
     for regular, bold, name in font_candidates:
-        if os.path.exists(regular) and os.path.exists(bold):
+        if os.path.exists(regular):
             try:
                 pdfmetrics.registerFont(TTFont(name, regular))
-                pdfmetrics.registerFont(TTFont(f'{name}-Bold', bold))
                 font_name = name
-                font_name_bold = f'{name}-Bold'
+
+                if os.path.exists(bold):
+                    pdfmetrics.registerFont(TTFont(f'{name}-Bold', bold))
+                    font_name_bold = f'{name}-Bold'
+                else:
+                    pdfmetrics.registerFont(TTFont(f'{name}-Bold', regular))
+                    font_name_bold = f'{name}-Bold'
+
                 font_registered = True
                 break
             except: pass
@@ -1706,10 +1725,10 @@ def create_voucher_pdf(voucher_data):
     c.drawCentredString(width/2, height - 170, f"Ngày: {voucher_data['date']}")
     
     # --- NỘI DUNG ---
-    # Lấy tên khách hàng nếu có
-    person_name = ""
+    # Lấy tên người nộp/nhận tiền: ưu tiên nhập tay trên form, sau đó fallback dữ liệu mã tour/booking
+    person_name = (voucher_data.get('payer_name') or "").strip()
     ref_code = voucher_data.get('ref_code', '')
-    if ref_code:
+    if ref_code and not person_name:
         try:
             # Thử tìm trong Tours
             t = run_query("SELECT customer_name FROM tours WHERE tour_code=?", (ref_code,), fetch_one=True)
@@ -1790,7 +1809,8 @@ def create_voucher_pdf(voucher_data):
     label_person = "Người nộp tiền:" if voucher_data['type'] == 'THU' else "Người nhận tiền:"
     draw_line_content(label_person, person_name, y); y -= line_height
     draw_line_content("Địa chỉ/SĐT:", "", y); y -= line_height
-    draw_line_content("Lý do:", f"{voucher_data['note']} (Mã: {voucher_data['ref_code']})", y); y -= line_height
+    draw_line_content("Mã Tour/Booking:", voucher_data.get('ref_code', ''), y); y -= line_height
+    draw_line_content("Lý do:", f"{voucher_data['note']}", y); y -= line_height
     draw_line_content("Số tiền:", f"{format_vnd(voucher_data['amount'])} VND", y, is_money=True); y -= line_height
     draw_line_content("Bằng chữ:", read_money_vietnamese(voucher_data['amount']), y); y -= line_height
     
@@ -1816,7 +1836,7 @@ def create_voucher_pdf(voucher_data):
         
     c.save()
     buffer.seek(0)
-    return buffer
+    return buffer.getvalue()
 
 def create_voucher_docx(voucher_data):
     """Tạo file Word phiếu thu/chi"""
@@ -1876,9 +1896,9 @@ def create_voucher_docx(voucher_data):
     doc.add_paragraph()
     
     # Data Logic
-    person_name = ""
+    person_name = (voucher_data.get('payer_name') or "").strip()
     ref_code = voucher_data.get('ref_code', '')
-    if ref_code:
+    if ref_code and not person_name:
         try:
             t = run_query("SELECT customer_name FROM tours WHERE tour_code=?", (ref_code,), fetch_one=True)
             if t and t['customer_name']: person_name = t['customer_name']
@@ -1904,7 +1924,8 @@ def create_voucher_docx(voucher_data):
 
     label_person = "Người nộp tiền:" if voucher_data['type'] == 'THU' else "Người nhận tiền:"
     add_row(label_person, person_name)
-    add_row("Lý do:", f"{voucher_data['note']} (Mã: {voucher_data['ref_code']})")
+    add_row("Mã Tour/Booking:", voucher_data.get('ref_code', ''))
+    add_row("Lý do:", f"{voucher_data['note']}")
     add_row("Số tiền:", f"{format_vnd(voucher_data['amount'])} VND", True, color)
     add_row("Bằng chữ:", read_money_vietnamese(voucher_data['amount']))
     add_row("Người xuất phiếu:", voucher_data.get('issuer', ''))
@@ -1926,7 +1947,7 @@ def create_voucher_docx(voucher_data):
     buffer = io.BytesIO()
     doc.save(buffer)
     buffer.seek(0)
-    return buffer
+    return buffer.getvalue()
 
 def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
     """Tạo file PDF Booking Confirmation (CFM)"""
@@ -1954,8 +1975,8 @@ def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
     draw_watermark()
 
     # --- CẤU HÌNH FONT (SỬA LẠI ĐỂ CHẠY TRÊN CLOUD) ---
-    font_name = 'Helvetica'
-    font_bold = 'Helvetica-Bold'
+    font_name = 'Times-Roman'
+    font_bold = 'Times-Bold'
     
     # Danh sách các cặp file font (Thường, Đậm) ưu tiên tìm kiếm
     # Bạn phải upload các file .ttf này lên cùng thư mục với app.py trên Streamlit Cloud
@@ -1963,6 +1984,8 @@ def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
         ("times.ttf", "timesbd.ttf", "TimesNewRoman"),  # Ưu tiên 1
         ("arial.ttf", "arialbd.ttf", "Arial"),          # Ưu tiên 2
         ("Roboto-Regular.ttf", "Roboto-Bold.ttf", "Roboto"), # Ưu tiên 3 (Nếu dùng Google Fonts)
+        ("/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf", "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf", "LiberationSerif"),
+        ("/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf", "DejaVuSerif"),
         # Thêm font hệ thống Linux (Streamlit Cloud)
         ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "DejaVuSans"),
         ("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", "LiberationSans"),
@@ -2473,7 +2496,7 @@ def create_booking_cfm_pdf(booking_info, company_info, lang='en'):
 
     c.save()
     buffer.seek(0)
-    return buffer
+    return buffer.getvalue()
 
 def create_booking_cfm_docx(booking_info, company_info, lang='en'):
     """Tạo file Word Booking Confirmation"""
@@ -2615,7 +2638,7 @@ def create_booking_cfm_docx(booking_info, company_info, lang='en'):
     buffer = io.BytesIO()
     doc.save(buffer)
     buffer.seek(0)
-    return buffer
+    return buffer.getvalue()
 
 # ==========================================
 # 4. GIAO DIỆN & LOGIC MODULES
@@ -4213,6 +4236,7 @@ def render_debt_management():
                     # Form nhập liệu (Luôn hiển thị)
                     k_amt = f"txn_amt_{selected_code}"
                     k_note = f"txn_note_{selected_code}"
+                    k_payer = f"txn_payer_{selected_code}"
                     
                     if k_amt not in st.session_state:
                         if remaining >= 1:
@@ -4230,6 +4254,20 @@ def render_debt_management():
                                     st.session_state[key_name] = "{:,.0f}".format(v_float).replace(",", ".") + " VND"
                             except: pass
 
+                    if k_payer not in st.session_state:
+                        payer_default = ""
+                        try:
+                            tour_info_p = run_query("SELECT customer_name FROM tours WHERE tour_code=?", (selected_code,), fetch_one=True)
+                            if tour_info_p and tour_info_p['customer_name']:
+                                payer_default = tour_info_p['customer_name']
+                            else:
+                                booking_info_p = run_query("SELECT customer_info FROM service_bookings WHERE code=?", (selected_code,), fetch_one=True)
+                                if booking_info_p and booking_info_p['customer_info']:
+                                    payer_default = booking_info_p['customer_info'].split(' - ')[0]
+                        except:
+                            pass
+                        st.session_state[k_payer] = payer_default
+
                     c1, c2 = st.columns(2)
                     txn_type = c1.radio("Loại phiếu", ["THU", "CHI (Hoàn tiền)"], horizontal=True, key=f"txn_type_{selected_code}")
                     
@@ -4238,6 +4276,10 @@ def render_debt_management():
                     try:
                         txn_amount = float(txn_amount_input.replace('.', '').replace(',', '').replace(' VND', '').strip())
                     except: txn_amount = 0.0
+
+                    c_code, c_payer = st.columns(2)
+                    c_code.text_input("Mã Tour/Booking", value=selected_code, disabled=True)
+                    txn_payer = c_payer.text_input("Người nộp/nhận tiền", key=k_payer, placeholder="VD: Nguyễn Văn A")
                     
                     c3, c4 = st.columns(2)
                     txn_method = c3.selectbox("Hình thức", ["Chuyển khoản", "Tiền mặt"], key=f"txn_method_{selected_code}")
@@ -4248,8 +4290,8 @@ def render_debt_management():
                         if txn_amount > 0 and txn_note:
                             now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                             run_query(
-                                "INSERT INTO transaction_history (ref_code, type, amount, payment_method, note, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                                (selected_code, txn_type, txn_amount, txn_method, txn_note, now_str),
+                                "INSERT INTO transaction_history (ref_code, type, amount, payment_method, payer_name, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                (selected_code, txn_type, txn_amount, txn_method, txn_payer.strip(), txn_note, now_str),
                                 commit=True
                             )
                             
@@ -4259,18 +4301,19 @@ def render_debt_management():
                                 'type': txn_type,
                                 'amount': txn_amount,
                                 'method': txn_method,
+                                'payer_name': txn_payer.strip(),
                                 'note': txn_note,
                                 'date': datetime.now().strftime("%d/%m/%Y"),
                                 'issuer': st.session_state.user_info.get('name', '')
                             }
                             st.session_state.last_voucher = v_data
                             
-                            # Tạo DOCX ngay và cache lại
-                            docx_bytes = create_voucher_docx(v_data)
-                            st.session_state.last_voucher_pdf = docx_bytes # Tái sử dụng biến session cũ
+                            # Tạo PDF và cache đúng định dạng cho nút tải PDF
+                            st.session_state.last_voucher_pdf = create_voucher_pdf(v_data)
                             
                             if k_amt in st.session_state: del st.session_state[k_amt]
                             if k_note in st.session_state: del st.session_state[k_note]
+                            if k_payer in st.session_state: del st.session_state[k_payer]
                             st.rerun()
                         else:
                             st.warning("Vui lòng nhập số tiền và nội dung.")
@@ -4293,12 +4336,13 @@ def render_debt_management():
                             'type': 'Loại',
                             'amount': 'Số tiền',
                             'payment_method': 'Hình thức',
+                            'payer_name': 'Người nộp/nhận',
                             'note': 'Nội dung',
                             'id': 'ID'
                         })
                         
                         st.dataframe(
-                            df_display[['ID', 'Ngày', 'Loại', 'Số tiền', 'Hình thức', 'Nội dung']],
+                            df_display[['ID', 'Ngày', 'Loại', 'Số tiền', 'Hình thức', 'Người nộp/nhận', 'Nội dung']],
                             use_container_width=True,
                             hide_index=True
                         )
@@ -4328,6 +4372,7 @@ def render_debt_management():
                                 'type': txn['type'],
                                 'amount': txn['amount'],
                                 'method': txn['payment_method'],
+                                'payer_name': txn['payer_name'] if 'payer_name' in txn.keys() else '',
                                 'note': txn['note'],
                                 'date': d_str,
                                 'issuer': st.session_state.user_info.get('name', '')
