@@ -311,6 +311,8 @@ def migrate_db_columns():
     except: pass
     try: c.execute("ALTER TABLE invoices ADD COLUMN cost_code TEXT")
     except: pass
+    try: c.execute("ALTER TABLE users ADD COLUMN reset_request INTEGER DEFAULT 0")
+    except: pass
     
     # --- Cập nhật cho Bàn Giao Tour (Mới) ---
     try: c.execute("ALTER TABLE tours ADD COLUMN pickup_location TEXT")
@@ -560,7 +562,14 @@ def migrate_db_columns():
 def init_db():
     conn = get_connection()
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, role TEXT, status TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE,
+        password TEXT,
+        role TEXT,
+        status TEXT,
+        reset_request INTEGER DEFAULT 0
+    )''')
     c.execute('''CREATE TABLE IF NOT EXISTS invoices (
         id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, date TEXT, invoice_number TEXT, invoice_symbol TEXT, 
         seller_name TEXT, buyer_name TEXT, pre_tax_amount REAL, tax_amount REAL, total_amount REAL, 
@@ -1682,23 +1691,6 @@ def create_voucher_pdf(voucher_data):
             header_x_text = 50 + draw_w + 20
         except: pass
 
-    # --- LOGO CHÌM (WATERMARK) ---
-    if comp['logo_b64_str']:
-        try:
-            c.saveState()
-            logo_data = base64.b64decode(comp['logo_b64_str'])
-            image_stream = io.BytesIO(logo_data)
-            img_reader = ImageReader(image_stream)
-            iw, ih = img_reader.getSize()
-            aspect = iw / float(ih)
-            wm_width = 300
-            wm_height = wm_width / aspect
-            c.setFillAlpha(0.1) # Độ mờ 10%
-            # Vẽ chính giữa trang
-            c.drawImage(img_reader, (width - wm_width)/2, (height - wm_height)/2, width=wm_width, height=wm_height, mask='auto')
-            c.restoreState()
-        except: pass
-
     # Thông tin công ty
     c.setFillColor(HexColor(primary_color))
     c.setFont(font_name_bold, 16)
@@ -1776,12 +1768,39 @@ def create_voucher_pdf(voucher_data):
     x_label = 70
     x_val = 200
     line_height = 30
-    
-    # Vẽ khung nền mờ
-    bg_color = "#E8F5E9" if voucher_data['type'] == 'THU' else "#FFEBEE"
-    c.setFillColor(HexColor(bg_color))
-    # Tăng chiều cao khung để chứa thêm thông tin (210 -> 330)
-    c.roundRect(50, y - 310, width - 100, 330, 10, fill=1, stroke=0)
+
+    # Khung nội dung (bỏ nền xanh/đỏ, thay bằng logo chìm)
+    content_x = 50
+    content_y = y - 270
+    content_w = width - 100
+    content_h = 285
+
+    if comp['logo_b64_str']:
+        try:
+            c.saveState()
+            logo_data = base64.b64decode(comp['logo_b64_str'])
+            image_stream = io.BytesIO(logo_data)
+            img_reader = ImageReader(image_stream)
+            iw, ih = img_reader.getSize()
+            aspect = iw / float(ih)
+            wm_width = 220
+            wm_height = wm_width / aspect
+            c.setFillAlpha(0.07)
+            c.drawImage(
+                img_reader,
+                content_x + (content_w - wm_width) / 2,
+                content_y + (content_h - wm_height) / 2,
+                width=wm_width,
+                height=wm_height,
+                mask='auto'
+            )
+            c.restoreState()
+        except:
+            pass
+
+    c.setStrokeColor(HexColor("#D8D8D8"))
+    c.setLineWidth(1)
+    c.roundRect(content_x, content_y, content_w, content_h, 10, fill=0, stroke=1)
     
     c.setFillColor(HexColor(text_color))
     
@@ -3143,6 +3162,26 @@ def render_login_page(comp):
                         else:
                             st.error("⚠️ Lỗi kết nối dữ liệu!")
 
+            st.caption("Quên mật khẩu? Gửi yêu cầu để Admin duyệt reset mật khẩu mặc định: 12345")
+            with st.form("forgot_password_form"):
+                forgot_user = st.text_input("Tài khoản cần reset", placeholder="Nhập username đã đăng ký")
+                forgot_submit = st.form_submit_button("GỬI YÊU CẦU QUÊN MẬT KHẨU")
+
+                if forgot_submit:
+                    if not forgot_user.strip():
+                        st.warning("Vui lòng nhập tên đăng nhập.")
+                    else:
+                        user_req = run_query("SELECT id, status, COALESCE(reset_request, 0) as reset_request FROM users WHERE username=?", (forgot_user.strip(),), fetch_one=True)
+                        if not user_req:
+                            st.error("Không tìm thấy tài khoản.")
+                        elif user_req['status'] != 'approved': # type: ignore
+                            st.warning("Tài khoản chưa được duyệt hoặc đang bị khóa.")
+                        elif int(user_req['reset_request'] or 0) == 1: # type: ignore
+                            st.info("Yêu cầu quên mật khẩu đã được gửi trước đó. Vui lòng chờ Admin duyệt.")
+                        else:
+                            run_query("UPDATE users SET reset_request=1 WHERE id=?", (user_req['id'],), commit=True) # type: ignore
+                            st.success("Đã gửi yêu cầu thành công! Sau khi Admin duyệt, mật khẩu sẽ được reset về 12345.")
+
         with tab_reg:
             with st.form("reg_form"):
                 st.markdown("<p style='text-align: center; color: #666;'>Tạo tài khoản mới cho nhân viên</p>", unsafe_allow_html=True)
@@ -3176,6 +3215,7 @@ def render_admin_notifications():
     del_tours = run_query("SELECT * FROM tours WHERE request_delete=1")
     req_edit_tours = run_query("SELECT * FROM tours WHERE request_edit_act=1")
     pending_users = run_query("SELECT * FROM users WHERE role='user' AND status='pending'")
+    reset_requests = run_query("SELECT * FROM users WHERE COALESCE(reset_request, 0)=1")
     req_invoices = run_query("SELECT * FROM invoices WHERE request_edit=1 AND status='active'")
     
     has_requests = False
@@ -3251,6 +3291,26 @@ def render_admin_notifications():
                     st.rerun()
                 if c2.button("✖ Xóa", key=f"del_user_{u['id']}"): # type: ignore
                     run_query("DELETE FROM users WHERE id=?", (u['id'],), commit=True) # type: ignore
+                    st.rerun()
+
+    # 5.1 DUYỆT QUÊN MẬT KHẨU
+    if reset_requests:
+        has_requests = True
+        st.markdown(f"#### 🔐 Quên mật khẩu ({len(reset_requests)})")
+        for u in reset_requests:
+            with st.container(border=True):
+                st.write(f"User: **{u['username']}** yêu cầu reset mật khẩu") # type: ignore
+                c1, c2 = st.columns(2)
+                if c1.button("✔ Duyệt reset về 12345", key=f"app_reset_pw_{u['id']}", type="primary"): # type: ignore
+                    run_query(
+                        "UPDATE users SET password=?, reset_request=0 WHERE id=?",
+                        (hash_pass("12345"), u['id']),
+                        commit=True
+                    ) # type: ignore
+                    st.success("Đã duyệt reset mật khẩu mặc định: 12345")
+                    st.rerun()
+                if c2.button("✖ Từ chối", key=f"rej_reset_pw_{u['id']}"): # type: ignore
+                    run_query("UPDATE users SET reset_request=0 WHERE id=?", (u['id'],), commit=True) # type: ignore
                     st.rerun()
 
     # 6. DUYỆT SỬA GIÁ HÓA ĐƠN
@@ -8871,6 +8931,31 @@ def render_hr_management():
                             st.success("Đã xóa!"); time.sleep(0.5); st.rerun()
             else:
                 st.info("Hiện không có yêu cầu nào.")
+
+            st.divider()
+            st.subheader("Yêu cầu quên mật khẩu")
+            reset_pending = run_query("SELECT * FROM users WHERE COALESCE(reset_request, 0)=1")
+            if reset_pending:
+                for p in reset_pending:
+                    with st.container(border=True):
+                        c1, c2, c3 = st.columns([2, 1, 1])
+                        c1.write(f"User: **{p['username']}** xin reset mật khẩu") # type: ignore
+                        if c2.button("✔ Duyệt", key=f"hr_reset_app_{p['id']}", use_container_width=True): # type: ignore
+                            run_query(
+                                "UPDATE users SET password=?, reset_request=0 WHERE id=?",
+                                (hash_pass("12345"), p['id']),
+                                commit=True
+                            ) # type: ignore
+                            st.success("Đã reset mật khẩu mặc định: 12345")
+                            time.sleep(0.5)
+                            st.rerun()
+                        if c3.button("✖ Từ chối", key=f"hr_reset_rej_{p['id']}", use_container_width=True): # type: ignore
+                            run_query("UPDATE users SET reset_request=0 WHERE id=?", (p['id'],), commit=True) # type: ignore
+                            st.success("Đã từ chối yêu cầu reset.")
+                            time.sleep(0.5)
+                            st.rerun()
+            else:
+                st.info("Hiện không có yêu cầu quên mật khẩu.")
 
 def render_search_module():
     st.title("🔍 Tra cứu thông tin hệ thống")
