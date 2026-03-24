@@ -1818,8 +1818,6 @@ def create_voucher_pdf(voucher_data):
     draw_line_content("Đã thanh toán:", f"{format_vnd(total_paid)} VND", y); y -= line_height
     draw_line_content("Còn lại:", f"{format_vnd(remaining)} VND", y); y -= line_height
     draw_line_content("Người xuất phiếu:", voucher_data.get('issuer', ''), y); y -= line_height
-
-    draw_line_content("Kèm theo:", "", y); y -= line_height
     
     # --- CHỮ KÝ ---
     y_sig = y - 40
