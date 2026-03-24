@@ -3171,16 +3171,23 @@ def render_login_page(comp):
                     if not forgot_user.strip():
                         st.warning("Vui lòng nhập tên đăng nhập.")
                     else:
-                        user_req = run_query("SELECT id, status, COALESCE(reset_request, 0) as reset_request FROM users WHERE username=?", (forgot_user.strip(),), fetch_one=True)
+                        user_req = run_query(
+                            "SELECT id, username, status, COALESCE(reset_request, 0) as reset_request FROM users WHERE LOWER(username)=LOWER(?)",
+                            (forgot_user.strip(),),
+                            fetch_one=True
+                        )
                         if not user_req:
                             st.error("Không tìm thấy tài khoản.")
-                        elif user_req['status'] != 'approved': # type: ignore
-                            st.warning("Tài khoản chưa được duyệt hoặc đang bị khóa.")
+                        elif user_req['status'] == 'pending': # type: ignore
+                            st.warning("Tài khoản đang chờ duyệt, chưa thể gửi yêu cầu reset.")
                         elif int(user_req['reset_request'] or 0) == 1: # type: ignore
                             st.info("Yêu cầu quên mật khẩu đã được gửi trước đó. Vui lòng chờ Admin duyệt.")
                         else:
-                            run_query("UPDATE users SET reset_request=1 WHERE id=?", (user_req['id'],), commit=True) # type: ignore
-                            st.success("Đã gửi yêu cầu thành công! Sau khi Admin duyệt, mật khẩu sẽ được reset về 12345.")
+                            ok_reset = run_query("UPDATE users SET reset_request=1 WHERE id=?", (user_req['id'],), commit=True) # type: ignore
+                            if ok_reset:
+                                st.success(f"Đã gửi yêu cầu thành công cho tài khoản {user_req['username']}! Sau khi Admin duyệt, mật khẩu sẽ được reset về 12345.") # type: ignore
+                            else:
+                                st.error("Không thể gửi yêu cầu reset. Vui lòng thử lại.")
 
         with tab_reg:
             with st.form("reg_form"):
@@ -3290,8 +3297,12 @@ def render_admin_notifications():
                     run_query("UPDATE users SET status='approved' WHERE id=?", (u['id'],), commit=True) # type: ignore
                     st.rerun()
                 if c2.button("✖ Xóa", key=f"del_user_{u['id']}"): # type: ignore
-                    run_query("DELETE FROM users WHERE id=?", (u['id'],), commit=True) # type: ignore
-                    st.rerun()
+                    ok_del_pending = run_query("DELETE FROM users WHERE id=?", (u['id'],), commit=True) # type: ignore
+                    if ok_del_pending:
+                        st.success("Đã xóa tài khoản chờ duyệt.")
+                        st.rerun()
+                    else:
+                        st.error("Xóa tài khoản thất bại. Vui lòng thử lại.")
 
     # 5.1 DUYỆT QUÊN MẬT KHẨU
     if reset_requests:
@@ -8897,21 +8908,30 @@ def render_hr_management():
                 st.divider()
                 st.markdown("##### 🗑️ Xóa tài khoản")
                 # Loại bỏ admin chính ra khỏi danh sách xóa để tránh lỗi
-                del_options = [u['username'] for u in users if u['username'] != 'admin'] # type: ignore
-                user_to_del = st.selectbox("Chọn tài khoản cần xóa:", del_options, key="sel_del_u")
+                del_options = {f"{u['username']} ({u['role']})": u['id'] for u in users if u['username'] != 'admin'} # type: ignore
+                user_to_del_label = st.selectbox("Chọn tài khoản cần xóa:", list(del_options.keys()), key="sel_del_u")
                 
                 if st.button("Xác nhận xóa tài khoản", type="primary", key="btn_del_u"):
-                    if user_to_del:
+                    if user_to_del_label:
+                        user_to_del_id = del_options[user_to_del_label]
+                        user_to_del_name = user_to_del_label.split(" (")[0]
                         # Kiểm tra quyền trước khi xóa
-                        user_to_del_info = run_query("SELECT role FROM users WHERE username=?", (user_to_del,), fetch_one=True)
+                        user_to_del_info = run_query("SELECT username, role FROM users WHERE id=?", (user_to_del_id,), fetch_one=True)
                         current_user_role = (st.session_state.user_info or {}).get('role')
+                        current_username = (st.session_state.user_info or {}).get('name')
 
-                        if current_user_role == 'admin_f1' and user_to_del_info and user_to_del_info['role'] == 'admin': # type: ignore
-                            st.error(f"Bạn không có quyền xóa tài khoản admin '{user_to_del}'.")
+                        if user_to_del_info and user_to_del_info['username'] == current_username: # type: ignore
+                            st.error("Không thể tự xóa tài khoản đang đăng nhập.")
+                        elif current_user_role == 'admin_f1' and user_to_del_info and user_to_del_info['role'] == 'admin': # type: ignore
+                            st.error(f"Bạn không có quyền xóa tài khoản admin '{user_to_del_name}'.")
                         else:
-                            run_query("DELETE FROM users WHERE username=?", (user_to_del,), commit=True)
-                            st.success(f"Đã xóa tài khoản {user_to_del}!")
-                            time.sleep(1); st.rerun()
+                            ok_del_user = run_query("DELETE FROM users WHERE id=?", (user_to_del_id,), commit=True)
+                            if ok_del_user:
+                                st.success(f"Đã xóa tài khoản {user_to_del_name}!")
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error("Xóa tài khoản thất bại. Vui lòng thử lại.")
             else:
                 st.info("Chưa có tài khoản nào.")
 
@@ -8927,8 +8947,13 @@ def render_hr_management():
                             run_query("UPDATE users SET status='approved' WHERE id=?", (p['id'],), commit=True) # type: ignore
                             st.success("Đã duyệt!"); time.sleep(0.5); st.rerun()
                         if c3.button("✖ Xóa", key=f"hr_del_{p['id']}", use_container_width=True): # type: ignore
-                            run_query("DELETE FROM users WHERE id=?", (p['id'],), commit=True) # type: ignore
-                            st.success("Đã xóa!"); time.sleep(0.5); st.rerun()
+                            ok_hr_del = run_query("DELETE FROM users WHERE id=?", (p['id'],), commit=True) # type: ignore
+                            if ok_hr_del:
+                                st.success("Đã xóa!")
+                                time.sleep(0.5)
+                                st.rerun()
+                            else:
+                                st.error("Xóa tài khoản thất bại.")
             else:
                 st.info("Hiện không có yêu cầu nào.")
 
