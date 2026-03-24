@@ -1808,7 +1808,6 @@ def create_voucher_pdf(voucher_data):
 
     label_person = "Người nộp tiền:" if voucher_data['type'] == 'THU' else "Người nhận tiền:"
     draw_line_content(label_person, person_name, y); y -= line_height
-    draw_line_content("Địa chỉ/SĐT:", "", y); y -= line_height
     draw_line_content("Mã Tour/Booking:", voucher_data.get('ref_code', ''), y); y -= line_height
     draw_line_content("Lý do:", f"{voucher_data['note']}", y); y -= line_height
     draw_line_content("Số tiền:", f"{format_vnd(voucher_data['amount'])} VND", y, is_money=True); y -= line_height
